@@ -11,7 +11,7 @@ includeProjects('Ghidra/Framework')
 includeProjects('Ghidra/Features')
 includeProjects('Ghidra/Configurations')
 includeProjects('Ghidra/Processors')
-includeProjects('Ghidra/Test')
+//includeProjects('Ghidra/Test')
 includeProjects('GPL')
 
 /*******************************************************************************************
@@ -21,11 +21,11 @@ includeProject('JsonDoclet', 'GhidraBuild/BuildFiles', true)
 includeProject('LaunchSupport', 'GhidraBuild', true)
 includeProject('Skeleton', 'GhidraBuild', true)
 includeProject('BuildFiles', 'GhidraBuild', true)
-includeProject('GhidraTest', '.', true)
+//includeProject('GhidraTest', '.', true)
 includeProject('decompile', 'Ghidra/Features/Decompiler/src', true)
 includeProject('RuntimeScripts', 'Ghidra', true)
-includeProject('IDAPro', 'GhidraBuild', true)
-includeProject('GhidraDocs', '.', true)
+//('IDAPro', 'GhidraBuild', true)
+//includeProject('GhidraDocs', '.', true)
 includeProjects('GhidraBuild/EclipsePlugins/GhidraDev') // requires Eclipse PDE
 includeProjects('GhidraBuild/EclipsePlugins/GhidraSleighEditor') // requires Eclipse DSL
 
