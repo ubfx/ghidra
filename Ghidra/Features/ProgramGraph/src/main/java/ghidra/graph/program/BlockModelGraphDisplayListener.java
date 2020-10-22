@@ -17,14 +17,15 @@ package ghidra.graph.program;
 
 import java.util.*;
 
+import docking.action.builder.ActionBuilder;
 import ghidra.app.plugin.core.graph.AddressBasedGraphDisplayListener;
+import ghidra.app.util.AddEditDialog;
 import ghidra.framework.plugintool.PluginTool;
 import ghidra.program.model.address.*;
 import ghidra.program.model.block.*;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
-import ghidra.service.graph.GraphDisplay;
-import ghidra.service.graph.GraphDisplayListener;
+import ghidra.service.graph.*;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 
@@ -39,31 +40,42 @@ public class BlockModelGraphDisplayListener extends AddressBasedGraphDisplayList
 			GraphDisplay display) {
 		super(tool, blockModel.getProgram(), display);
 		this.blockModel = blockModel;
+		addActions(display);
+	}
+
+	private void addActions(GraphDisplay display) {
+		display.addAction(new ActionBuilder("Rename Vertex", "Block Graph")
+				.popupMenuPath("Rename Vertex")
+				.withContext(VertexGraphActionContext.class)
+				// only enable action when vertex corresponds to an address
+				.enabledWhen(c -> getAddress(c.getClickedVertex().getId()) != null)
+				.onAction(this::updateVertexName)
+				.build());
 	}
 
 	@Override
-	protected String getVertexIdForAddress(Address address) {
+	protected String getVertexId(Address address) {
 		try {
 			CodeBlock[] blocks = blockModel.getCodeBlocksContaining(address, TaskMonitor.DUMMY);
 			if (blocks != null && blocks.length > 0) {
-				return super.getVertexIdForAddress(blocks[0].getFirstStartAddress());
+				return super.getVertexId(blocks[0].getFirstStartAddress());
 			}
 		}
 		catch (CancelledException e) {
 			// Will not happen with dummyMonitor
 			// Model has already done the work when the graph was created
 		}
-		return super.getVertexIdForAddress(address);
+		return super.getVertexId(address);
 	}
 
 	@Override
-	protected List<String> getVertices(AddressSetView addrSet) {
+	protected Set<AttributedVertex> getVertices(AddressSetView addrSet) {
 		if (addrSet.isEmpty()) {
-			return Collections.emptyList();
+			return Collections.emptySet();
 		}
 
 		// Identify all blocks which have an entry point within the selection address set
-		ArrayList<String> blockList = new ArrayList<String>();
+		Set<AttributedVertex> vertices = new HashSet<>();
 		try {
 			SymbolTable symTable = program.getSymbolTable();
 			CodeBlockIterator cbIter =
@@ -79,7 +91,10 @@ public class BlockModelGraphDisplayListener extends AddressBasedGraphDisplayList
 				else {
 					addrString = addr.toString();
 				}
-				blockList.add(addrString);
+				AttributedVertex vertex = graphDisplay.getGraph().getVertex(addrString);
+				if (vertex != null) {
+					vertices.add(vertex);
+				}
 			}
 		}
 		catch (CancelledException e) {
@@ -87,18 +102,18 @@ public class BlockModelGraphDisplayListener extends AddressBasedGraphDisplayList
 			// Model has already done the work when the graph was created
 		}
 
-		return blockList;
+		return vertices;
 	}
 
 	@Override
-	protected AddressSet getAddressSetForVertices(List<String> vertexIds) {
+	protected AddressSet getAddresses(Set<AttributedVertex> vertices) {
 		AddressSet addrSet = new AddressSet();
 
 		try {
 			// for each address string, translate it into a block
 			//   and add it to the address set.
-			for (String vertexId : vertexIds) {
-				Address blockAddr = getAddressForVertexId(vertexId);
+			for (AttributedVertex vertex : vertices) {
+				Address blockAddr = getAddress(vertex);
 				if (!isValidAddress(blockAddr)) {
 					continue;
 				}
@@ -135,6 +150,26 @@ public class BlockModelGraphDisplayListener extends AddressBasedGraphDisplayList
 			return false;
 		}
 		return program.getMemory().contains(addr) || addr.isExternalAddress();
+	}
+
+	private void updateVertexName(VertexGraphActionContext context) {
+		AttributedVertex vertex = context.getClickedVertex();
+		Address address = getAddress(vertex);
+		Symbol symbol = program.getSymbolTable().getPrimarySymbol(address);
+
+		if (symbol == null) {
+			AddEditDialog dialog = new AddEditDialog("Create Label", tool);
+			dialog.addLabel(address, program, context.getComponentProvider());
+		}
+		else {
+			AddEditDialog dialog = new AddEditDialog("Edit Label", tool);
+			dialog.editLabel(symbol, program, context.getComponentProvider());
+		}
+	}
+
+	@Override
+	public GraphDisplayListener cloneWith(GraphDisplay newGraphDisplay) {
+		return new BlockModelGraphDisplayListener(tool, blockModel, newGraphDisplay);
 	}
 
 }

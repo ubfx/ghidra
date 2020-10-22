@@ -36,6 +36,7 @@ import ghidra.framework.cmd.BackgroundCommand;
 import ghidra.framework.model.*;
 import ghidra.framework.options.Options;
 import ghidra.framework.plugintool.PluginTool;
+import ghidra.framework.preferences.Preferences;
 import ghidra.program.model.address.*;
 import ghidra.program.model.listing.*;
 import ghidra.program.util.*;
@@ -394,6 +395,7 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 				case DomainObject.DO_PROPERTY_CHANGED:
 					if (!optionsChanged) {
 						initializeOptions();
+						Preferences.store();
 						optionsChanged = true;
 					}
 					break;
@@ -800,6 +802,7 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 				notifyAnalysisEnded();
 				if (printTaskTimes) {
 					printTimedTasks();
+					saveTaskTimes();
 				}
 			}
 		}
@@ -1054,6 +1057,7 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 			initializeOptions(options);
 		}
 		catch (OptionsVetoException e) {
+// FIXME!! Not good to popup for all use cases
 			// This will only happen if an Analyzer author makes a mistake 
 			Msg.showError(this, null, "Invalid Analysis Option",
 				"Invalid Analysis option set during initialization", e);
@@ -1284,6 +1288,19 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 
 		String taskTimeString = getTaskTimesString();
 		Msg.info(this, taskTimeString);
+	}
+
+	private void saveTaskTimes() {
+
+		StoredAnalyzerTimes times = StoredAnalyzerTimes.getStoredAnalyzerTimes(program);
+
+		String taskNames[] = getTimedTasks();
+		for (String element : taskNames) {
+			long taskTimeMSec = getTaskTime(timedTasks, element);
+			times.addTime(element, taskTimeMSec);
+		}
+
+		StoredAnalyzerTimes.setStoredAnalyzerTimes(program, times);
 	}
 
 	/**

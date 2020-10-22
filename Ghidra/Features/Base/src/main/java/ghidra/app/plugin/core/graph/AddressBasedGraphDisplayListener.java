@@ -15,14 +15,11 @@
  */
 package ghidra.app.plugin.core.graph;
 
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import ghidra.app.cmd.label.AddLabelCmd;
-import ghidra.app.cmd.label.RenameLabelCmd;
+import docking.widgets.EventTrigger;
 import ghidra.app.events.*;
-import ghidra.framework.cmd.Command;
 import ghidra.framework.model.*;
 import ghidra.framework.plugintool.PluginEvent;
 import ghidra.framework.plugintool.PluginTool;
@@ -31,8 +28,7 @@ import ghidra.program.model.address.*;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.symbol.*;
 import ghidra.program.util.*;
-import ghidra.service.graph.GraphDisplay;
-import ghidra.service.graph.GraphDisplayListener;
+import ghidra.service.graph.*;
 import ghidra.util.Swing;
 
 /**
@@ -41,8 +37,8 @@ import ghidra.util.Swing;
 public abstract class AddressBasedGraphDisplayListener
 		implements GraphDisplayListener, PluginEventListener, DomainObjectListener {
 
-	private PluginTool tool;
-	private GraphDisplay graphDisplay;
+	protected PluginTool tool;
+	protected GraphDisplay graphDisplay;
 	protected Program program;
 	private SymbolTable symbolTable;
 	private String name;
@@ -65,8 +61,8 @@ public abstract class AddressBasedGraphDisplayListener
 	}
 
 	@Override
-	public void locationChanged(String vertexId) {
-		Address address = getAddressForVertexId(vertexId);
+	public void locationFocusChanged(AttributedVertex vertex) {
+		Address address = getAddress(vertex);
 		if (address != null) {
 			ProgramLocation location = new ProgramLocation(program, address);
 			tool.firePluginEvent(new ProgramLocationPluginEvent(name, location, program));
@@ -74,8 +70,8 @@ public abstract class AddressBasedGraphDisplayListener
 	}
 
 	@Override
-	public void selectionChanged(List<String> vertexIds) {
-		AddressSet addressSet = getAddressSetForVertices(vertexIds);
+	public void selectionChanged(Set<AttributedVertex> vertices) {
+		AddressSet addressSet = getAddresses(vertices);
 		if (addressSet != null) {
 			ProgramSelection selection = new ProgramSelection(addressSet);
 			ProgramSelectionPluginEvent event =
@@ -101,22 +97,33 @@ public abstract class AddressBasedGraphDisplayListener
 			ProgramLocationPluginEvent ev = (ProgramLocationPluginEvent) event;
 			if (isMyProgram(ev.getProgram())) {
 				ProgramLocation location = ev.getLocation();
-				graphDisplay.setLocation(getVertexIdForAddress(location.getAddress()));
+				AttributedVertex vertex = getVertex(location.getAddress());
+				// update graph location, but tell it not to send out event
+				graphDisplay.setFocusedVertex(vertex, EventTrigger.INTERNAL_ONLY);
 			}
 		}
 		else if (event instanceof ProgramSelectionPluginEvent) {
 			ProgramSelectionPluginEvent ev = (ProgramSelectionPluginEvent) event;
 			if (isMyProgram(ev.getProgram())) {
 				ProgramSelection selection = ev.getSelection();
-				List<String> selectedVertices = getVertices(selection);
+				Set<AttributedVertex> selectedVertices = getVertices(selection);
 				if (selectedVertices != null) {
-					graphDisplay.selectVertices(selectedVertices);
+					// since we are responding to an event, tell the GraphDisplay not to send event
+					graphDisplay.selectVertices(selectedVertices, EventTrigger.INTERNAL_ONLY);
 				}
 			}
 		}
 	}
 
-	protected String getVertexIdForAddress(Address address) {
+	public AttributedVertex getVertex(Address address) {
+		if (address == null) {
+			return null;
+		}
+		String id = getVertexId(address);
+		return graphDisplay.getGraph().getVertex(id);
+	}
+
+	protected String getVertexId(Address address) {
 		// vertex ids for external locations use symbol names since they don't have meaningful addresses.
 		if (address.isExternalAddress()) {
 			Symbol s = symbolTable.getPrimarySymbol(address);
@@ -152,31 +159,19 @@ public abstract class AddressBasedGraphDisplayListener
 
 	}
 
-	protected Address getAddressForVertexId(String vertexId) {
-		return getAddress(vertexId);
+	protected Address getAddress(AttributedVertex vertex) {
+		if (vertex == null) {
+			return null;
+		}
+		return getAddress(vertex.getId());
 	}
 
-	protected abstract List<String> getVertices(AddressSetView selection);
+	protected abstract Set<AttributedVertex> getVertices(AddressSetView selection);
 
-	protected abstract AddressSet getAddressSetForVertices(List<String> vertexIds);
+	protected abstract AddressSet getAddresses(Set<AttributedVertex> vertexIds);
 
 	private boolean isMyProgram(Program p) {
 		return p == program;
-	}
-
-	@Override
-	public boolean updateVertexName(String vertexId, String oldName, String newName) {
-		Address address = getAddressForVertexId(vertexId);
-		Symbol symbol = program.getSymbolTable().getPrimarySymbol(address);
-
-		Command command;
-		if (symbol != null) {
-			command = new RenameLabelCmd(address, oldName, newName, SourceType.USER_DEFINED);
-		}
-		else {
-			command = new AddLabelCmd(address, newName, SourceType.USER_DEFINED);
-		}
-		return tool.execute(command, program);
 	}
 
 	@Override
@@ -206,15 +201,18 @@ public abstract class AddressBasedGraphDisplayListener
 	}
 
 	private void handleSymbolAddedOrRenamed(Address address, Symbol symbol) {
-		String id = getVertexIdForAddress(address);
-		graphDisplay.updateVertexName(id, symbol.getName());
+		AttributedVertex vertex = getVertex(address);
+		graphDisplay.updateVertexName(vertex, symbol.getName());
 	}
 
 	private void handleSymbolRemoved(Address address) {
-		String id = getVertexIdForAddress(address);
+		AttributedVertex vertex = getVertex(address);
+		if (vertex == null) {
+			return;
+		}
 		Symbol symbol = program.getSymbolTable().getPrimarySymbol(address);
 		String displayName = symbol == null ? address.toString() : symbol.getName();
-		graphDisplay.updateVertexName(id, displayName);
+		graphDisplay.updateVertexName(vertex, displayName);
 	}
 
 	private void dispose() {

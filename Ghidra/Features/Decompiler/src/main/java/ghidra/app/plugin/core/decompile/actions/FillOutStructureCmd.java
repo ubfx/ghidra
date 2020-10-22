@@ -75,6 +75,9 @@ public class FillOutStructureCmd extends BackgroundCommand {
 	private TaskMonitor monitor;
 	private PluginTool tool;
 
+	private List<OffsetPcodeOpPair> storePcodeOps = new ArrayList<OffsetPcodeOpPair>();
+	private List<OffsetPcodeOpPair> loadPcodeOps = new ArrayList<OffsetPcodeOpPair>();
+
 	/**
 	 * Constructor.
 	 * 
@@ -167,6 +170,60 @@ public class FillOutStructureCmd extends BackgroundCommand {
 
 		return true;
 	}
+
+	/**
+	 * Method to create a structure data type for a variable in the given function.
+	 * @param var a parameter, local variable, or global variable used in the given function
+	 * @param function the function to process
+	 * @return a filled-in structure or null if one could not be created
+	 */
+	public Structure processStructure(HighVariable var, Function function) {
+
+		if (var == null || var.getSymbol() == null || var.getOffset() >= 0) {
+			return null;
+		}
+
+		Structure structDT;
+
+		try {
+			fillOutStructureDef(var);
+			structDT = createStructure(null, var, function, false);
+			populateStructure(structDT);
+			pushIntoCalls(structDT);
+		}
+		catch (Exception e) {
+			return null;
+		}
+
+		return structDT;
+	}
+
+	/**
+	 * Retrieve the component map that was generated when structure was created using decomiler info
+	 * @return componentMap
+	 */
+	public NoisyStructureBuilder getComponentMap() {
+		return componentMap;
+	}
+
+	/**
+	 * Retrieve the offset/pcodeOp pairs that are used to store data into the variable
+	 * the FillInStructureCmd was trying to create a structure on.
+	 * @return the pcodeOps doing the storing to the associated variable
+	 */
+	public List<OffsetPcodeOpPair> getStorePcodeOps() {
+		return storePcodeOps;
+	}
+
+	/**
+	 * Retrieve the offset/pcodeOp pairs that are used to load data from the variable
+	 * the FillInStructureCmd was trying to create a structure on.
+	 * @return the pcodeOps doing the loading from the associated variable
+	 */
+	public List<OffsetPcodeOpPair> getLoadPcodeOps() {
+		return loadPcodeOps;
+	}
+
 
 	/**
 	 * Retrieve the (likely) storage address for a function parameter given its index
@@ -633,6 +690,11 @@ public class FillOutStructureCmd extends BackgroundCommand {
 					case PcodeOp.LOAD:
 						outDt = getDataTypeTraceForward(output);
 						componentMap.addDataType(currentRef.offset, outDt);
+
+						if (outDt != null) {
+							loadPcodeOps.add(new OffsetPcodeOpPair(currentRef.offset, pcodeOp));
+						}
+
 						break;
 					case PcodeOp.STORE:
 						// create a location in the struct
@@ -642,6 +704,11 @@ public class FillOutStructureCmd extends BackgroundCommand {
 						}
 						outDt = getDataTypeTraceBackward(inputs[2]);
 						componentMap.addDataType(currentRef.offset, outDt);
+
+						if (outDt != null) {
+							storePcodeOps.add(new OffsetPcodeOpPair(currentRef.offset, pcodeOp));
+						}
+
 						break;
 					case PcodeOp.CAST:
 						putOnList(output, currentRef.offset, todoList, doneList);
@@ -709,5 +776,27 @@ public class FillOutStructureCmd extends BackgroundCommand {
 		}
 		todoList.add(new PointerRef(output, offset));
 		doneList.add(output);
+	}
+
+	/**
+	 * Class to create pair between an offset and its related PcodeOp
+	 */
+	static public class OffsetPcodeOpPair {
+
+		private Long offset;
+		private PcodeOp pcodeOp;
+
+		public OffsetPcodeOpPair(Long offset, PcodeOp pcodeOp) {
+			this.offset = offset;
+			this.pcodeOp = pcodeOp;
+		}
+
+		public Long getOffset() {
+			return offset;
+		}
+
+		public PcodeOp getPcodeOp() {
+			return pcodeOp;
+		}
 	}
 }

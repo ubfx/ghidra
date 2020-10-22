@@ -1133,8 +1133,8 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 	}
 
 	/**
-	 * Create EXTERNAL memory block based upon start of {@link #freeAddressRange} and the
-	 * current {@link #nextFreeAddress}.
+	 * Create EXTERNAL memory block based upon {@link #externalBlockLimits} and
+	 * {@link #lastExternalBlockEntryAddress}.
 	 */
 	private void createExternalBlock() {
 		if (lastExternalBlockEntryAddress == null) {
@@ -1144,7 +1144,8 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 		long size = lastExternalBlockEntryAddress.subtract(externalBlockAddress) + 1;
 		try {
 			MemoryBlock block =
-				memory.createUninitializedBlock("EXTERNAL", externalBlockAddress, size, false);
+				memory.createUninitializedBlock(MemoryBlock.EXTERNAL_BLOCK_NAME,
+					externalBlockAddress, size, false);
 
 			// assume any value in external is writable.
 			block.setWrite(true);
@@ -1271,6 +1272,8 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 			return null;
 		}
 
+		ElfLoadAdapter loadAdapter = elf.getLoadAdapter();
+
 		ElfSectionHeader[] elfSections = elf.getSections();
 		short sectionIndex = elfSymbol.getSectionHeaderIndex();
 		Address symSectionBase = null;
@@ -1292,11 +1295,13 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 				}
 				symbolSpace = symSectionBase.getAddressSpace();
 			} // else assume sections have been stripped
-			if (symbolSpace.getPhysicalSpace() == defaultSpace) {
+			AddressSpace space = symbolSpace.getPhysicalSpace();
+			symOffset = loadAdapter.getAdjustedMemoryOffset(symOffset, space);
+			if (space == defaultSpace) {
 				symOffset =
 					elf.adjustAddressForPrelink(symOffset) + getImageBaseWordAdjustmentOffset();
 			}
-			else if (symbolSpace.getPhysicalSpace() == defaultDataSpace) {
+			else if (space == defaultDataSpace) {
 				symOffset += getImageDataBase();
 			}
 		}
@@ -1304,6 +1309,7 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 			// FIXME: No sections defined or refers to external symbol
 			// Uncertain what if any offset adjustments should apply, although the
 			// EXTERNAL block is affected by the program image base
+			symOffset = loadAdapter.getAdjustedMemoryOffset(symOffset, defaultSpace);
 			symOffset += getImageBaseWordAdjustmentOffset();
 		}
 		else if (sectionIndex == ElfSectionHeaderConstants.SHN_ABS) { // Absolute value/address - 0xfff1
@@ -1311,6 +1317,10 @@ class ElfProgramBuilder extends MemorySectionResolver implements ElfLoadHelper {
 			// The should potentially be assign a constant address instead (not possible currently)
 
 			// Note: Assume data space - symbols will be "pinned"
+
+			// TODO: it may be inappropriate to adjust since value may not actually be a memory address - what to do?
+			// symOffset = loadAdapter.adjustMemoryOffset(symOffset, space);
+
 			symbolSpace = getDefaultDataSpace();
 		}
 		else if (sectionIndex == ElfSectionHeaderConstants.SHN_COMMON) { // Common symbols - 0xfff2 (

@@ -42,12 +42,8 @@ public class GnuDemanglerParser {
 	private static final String TYPEINFO_FOR = "typeinfo for ";
 	private static final String COVARIANT_RETURN_THUNK = "covariant return thunk";
 
-	private static final Set<String> ADDRESS_TABLE_PREFIXES = Set.of(
-		CONSTRUCTION_VTABLE_FOR,
-		VTT_FOR,
-		VTABLE_FOR,
-		TYPEINFO_FN_FOR,
-		TYPEINFO_FOR);
+	private static final Set<String> ADDRESS_TABLE_PREFIXES =
+		Set.of(CONSTRUCTION_VTABLE_FOR, VTT_FOR, VTABLE_FOR, TYPEINFO_FN_FOR, TYPEINFO_FOR);
 
 	private static final String OPERATOR = "operator";
 	private static final String LAMBDA = "lambda";
@@ -214,8 +210,7 @@ public class GnuDemanglerParser {
 	 * Parts:
 	 * 			-full text without leading characters (capture group 1)
 	 */
-	private static final Pattern UNNAMED_TYPE_PATTERN =
-		Pattern.compile("(\\{unnamed type#\\d+})");
+	private static final Pattern UNNAMED_TYPE_PATTERN = Pattern.compile("(\\{unnamed type#\\d+})");
 
 	/*
 	 * Sample:  covariant return thunk to Foo::Bar::copy(Foo::CoolStructure*) const
@@ -249,14 +244,6 @@ public class GnuDemanglerParser {
 	 */
 	private static final Pattern DECLTYPE_RETURN_TYPE_PATTERN =
 		Pattern.compile("decltype \\(.*\\)");
-
-	/**
-	 * Simple pattern to match any text that is trailed by digits
-	 * 
-	 * note: the '?' after the .*   this is there to allow the trailing digits to match as many as
-	 *       possible
-	 */
-	private static final Pattern ENDS_WITH_DIGITS_PATTERN = Pattern.compile("(.*?)\\d+");
 
 	private static Pattern createOverloadedOperatorNamePattern() {
 
@@ -312,8 +299,7 @@ public class GnuDemanglerParser {
 	 * @return the demangled object
 	 * @throws DemanglerParseException if there is an unexpected error parsing
 	 */
-	public DemangledObject parse(String mangled, String demangled)
-			throws DemanglerParseException {
+	public DemangledObject parse(String mangled, String demangled) throws DemanglerParseException {
 
 		this.mangledSource = mangled;
 		this.demangledSource = demangled;
@@ -328,14 +314,22 @@ public class GnuDemanglerParser {
 
 	private DemangledObjectBuilder getSpecializedBuilder(String demangled) {
 
-		DemangledObjectBuilder operatorHandler = getOperatorHandler(demangled);
-		if (operatorHandler != null) {
-			return operatorHandler;
-		}
-
+		//
+		// Note: we check for the 'special handlers' first, since they are more specific than 
+		//       the other handlers here.  Checking for the operator handler first can produce 
+		//       errors, since some 'special handler' strings actually contain 'operator' 
+		//       signatures.  In those cases, the operator handler will incorrectly match on the
+		//       operator text.   Since the 'special handlers' perform more specific checks, it is
+		//       safe to do those first.
+		//
 		DemangledObjectBuilder handler = getSpecialPrefixHandler(mangledSource, demangled);
 		if (handler != null) {
 			return handler;
+		}
+
+		DemangledObjectBuilder operatorHandler = getOperatorHandler(demangled);
+		if (operatorHandler != null) {
+			return operatorHandler;
 		}
 
 		return null;
@@ -1115,8 +1109,7 @@ public class GnuDemanglerParser {
 		@Override
 		public String toString() {
 			ToStringBuilder builder = new ToStringBuilder(this, ToStringStyle.JSON_STYLE);
-			return builder
-					.append("name", name)
+			return builder.append("name", name)
 					.append("prefix", prefix)
 					.append("type", type)
 					.append("demangled", demangled)
@@ -1185,9 +1178,8 @@ public class GnuDemanglerParser {
 
 		@Override
 		DemangledObject doBuild(Demangled namespace) {
-			DemangledString demangledString =
-				new DemangledString(mangledSource, demangledSource, "typeinfo-name", type,
-					-1/*unknown length*/, false);
+			DemangledString demangledString = new DemangledString(mangledSource, demangledSource,
+				"typeinfo-name", type, -1/*unknown length*/, false);
 			demangledString.setSpecialPrefix("typeinfo name for ");
 			String namespaceString = removeBadSpaces(type);
 			setNamespace(demangledString, namespaceString);
@@ -1202,15 +1194,6 @@ public class GnuDemanglerParser {
 			this.demangled = demangled;
 			this.prefix = prefix;
 			this.type = type;
-
-			Matcher matcher = ENDS_WITH_DIGITS_PATTERN.matcher(demangled);
-			if (matcher.matches()) {
-				// ends with a number, strip it off
-				int oldLength = demangled.length();
-				this.demangled = matcher.group(1);
-				int delta = oldLength - this.demangled.length();
-				this.type = type.substring(0, type.length() - delta);
-			}
 
 			/*
 			 Samples:
@@ -1266,31 +1249,36 @@ public class GnuDemanglerParser {
 			//
 			String operatorChars = matcher.group(2);
 			String templates = matcher.group(3);
-			templates = templates == null ? "" : templates;
+			int start = matcher.start(2); // operator chars start
+			int end = matcher.end(3); // templates end
+
+			if (templates == null) {
+				templates = "";
+				end = matcher.end(2); // no templates; end of the operator chars
+			}
 
 			//
 			// The 'operator' functions have symbols that confuse our default function parsing.  
 			// Specifically, operators that use shift symbols (<, <<, >, >>) will cause our 
-			// template parsing to fail.  To default the failure, we will install a temporary 
+			// template parsing to fail.  To defeat the failure, we will install a temporary 
 			// function name here and then restore it after parsing is finished.
 			//
-			String originalPrefix = OPERATOR + operatorChars + templates;
+			String rawPrefix = OPERATOR + demangled.substring(start, end);
 			String placeholder = "TEMPNAMEPLACEHOLDERVALUE";
-			String tempName = demangled.replace(originalPrefix, placeholder);
+			String tempName = demangled.replace(rawPrefix, placeholder);
 
 			DemangledFunction function = (DemangledFunction) parseFunctionOrVariable(tempName);
 			function.setOverloadedOperator(true);
-			function.setName(originalPrefix);
 
-			if (!StringUtils.isBlank(templates)) {
-				String escapedPrefix = removeBadSpaces(originalPrefix);
+			String simpleName = OPERATOR + operatorChars;
+			if (StringUtils.isBlank(templates)) {
+				function.setName(simpleName);
+			}
+			else {
 				String escapedTemplates = removeBadSpaces(templates);
-				int templateIndex = escapedPrefix.indexOf(escapedTemplates);
-				String operatorName = escapedPrefix.substring(0, templateIndex);
 				DemangledTemplate demangledTemplate = parseTemplate(escapedTemplates);
-
 				function.setTemplate(demangledTemplate);
-				function.setName(operatorName);
+				function.setName(simpleName);
 			}
 
 			return function;
@@ -1451,8 +1439,7 @@ public class GnuDemanglerParser {
 		@Override
 		public String toString() {
 			ToStringBuilder builder = new ToStringBuilder(this, ToStringStyle.JSON_STYLE);
-			return builder
-					.append("text", text)
+			return builder.append("text", text)
 					.append("paramStart", paramStart)
 					.append("paramEnd", paramEnd)
 					.toString();
@@ -1513,8 +1500,7 @@ public class GnuDemanglerParser {
 		@Override
 		public String toString() {
 			ToStringBuilder builder = new ToStringBuilder(this, ToStringStyle.JSON_STYLE);
-			return builder
-					.append("fullText", fullText)
+			return builder.append("fullText", fullText)
 					.append("params", params)
 					.append("trailing", trailing)
 					.toString();
@@ -1639,10 +1625,7 @@ public class GnuDemanglerParser {
 				last = ch;
 			}
 
-			return parts.stream()
-					.map(p -> p.condensed)
-					.collect(Collectors.joining())
-					.trim();
+			return parts.stream().map(p -> p.condensed).collect(Collectors.joining()).trim();
 		}
 
 		private boolean isSurroundedByCharacters(char last, char next) {
