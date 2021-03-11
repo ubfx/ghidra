@@ -654,6 +654,9 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 	 * @param provider the provider to be removed.
 	 */
 	public void removeComponent(ComponentProvider provider) {
+		if (provider == defaultProvider) {
+			defaultProvider = null;
+		}
 		placeholderManager.removeComponent(provider);
 	}
 
@@ -822,6 +825,7 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 		setNextFocusPlaceholder(null);
 		removeInstance(this);
 		root = null;
+		lastActiveWindow = null;
 	}
 
 	void showComponent(ComponentProvider provider, boolean visibleState, boolean shouldEmphasize) {
@@ -931,17 +935,19 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 	 * @param rootXMLElement JDOM element from which to extract the state information.
 	 */
 	public void restoreFromXML(Element rootXMLElement) {
-		Element rootNodeElement = rootXMLElement.getChild(RootNode.ROOT_NODE_ELEMENT_NAME);
-		restoreWindowDataFromXml(rootNodeElement);
-		// load the tool preferences
+		restoreWindowDataFromXml(rootXMLElement);
 		restorePreferencesFromXML(rootXMLElement);
 	}
 
 	/**
 	 * Restore to the docking window manager the layout and positioning information from XML.
-	 * @param windowData The XML element containing the above information.
+	 * @param rootXMLElement JDOM element from which to extract the state information.
 	 */
-	public void restoreWindowDataFromXml(Element windowData) {
+	public void restoreWindowDataFromXml(Element rootXMLElement) {
+		Element windowData = rootXMLElement.getChild(RootNode.ROOT_NODE_ELEMENT_NAME);
+		if (windowData == null) {
+			return;
+		}
 		//
 		// Clear our focus history, as we are changing placeholders' providers, so the old focus
 		// is no longer relevant.
@@ -1378,6 +1384,10 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 			focusedPlaceholder.setSelected(false);
 		}
 
+		// Activating placeholders is done to help users find widgets hiding in plain sight. 
+		// Assume that the user is no longer seeking a provider if they are clicking around.
+		activatedInfo.clear();
+
 		focusedPlaceholder = placeholder;
 
 		// put the last focused placeholder at the front of the list for restoring focus work later
@@ -1576,7 +1586,7 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 		return toolPreferencesElement;
 	}
 
-	private void restorePreferencesFromXML(Element rootElement) {
+	public void restorePreferencesFromXML(Element rootElement) {
 		Element toolPreferencesElement = rootElement.getChild(TOOL_PREFERENCES_XML_NAME);
 		if (toolPreferencesElement == null) {
 			return;
@@ -1654,7 +1664,7 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 	 * @param dialogComponent the DialogComponentProvider object to be shown in a dialog
 	 */
 	public static void showDialog(DialogComponentProvider dialogComponent) {
-		showDialog(null, dialogComponent, (Component) null);
+		doShowDialog(dialogComponent, null);
 	}
 
 	/**
@@ -1670,41 +1680,10 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 			ComponentProvider centeredOnProvider) {
 		ComponentPlaceholder placeholder = getActivePlaceholder(centeredOnProvider);
 		Component c = null;
-		Window parent = null;
-		if (placeholder != null) {
-			parent = root.getWindow(placeholder);
-			c = placeholder.getComponent();
+		if (placeholder == null && centeredOnProvider != null) {
+			c = centeredOnProvider.getComponent();
 		}
-		showDialog(parent, dialogComponent, c);
-
-	}
-
-	private static void doShowDialog(DialogComponentProvider provider, Component parent,
-			Component centeredOnComponent) {
-
-		Runnable r = () -> {
-			if (provider.isVisible()) {
-				provider.toFront();
-				return;
-			}
-
-			Window bestParent = getParentWindow(parent);
-			Component bestCenter = getCenterOnComponent(bestParent, centeredOnComponent);
-
-			// Make sure the window we have chosen to center over is related to the given parent.
-			// This prevents the oddness of a dialog that appears on the non-active screen.
-			bestParent = ensureParentHierarchy(bestParent, bestCenter);
-
-			DockingDialog dialog = DockingDialog.createDialog(bestParent, provider, bestCenter);
-			dialog.setVisible(true);
-		};
-
-		if (provider.isModal()) {
-			Swing.runNow(r);
-		}
-		else {
-			Swing.runIfSwingOrRunLater(r);
-		}
+		doShowDialog(dialogComponent, c);
 	}
 
 	/**
@@ -1721,69 +1700,141 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 	 * @see #getParentWindow(Component) for parenting notes
 	 */
 	public static void showDialog(Component parent, DialogComponentProvider dialogComponent) {
-		doShowDialog(dialogComponent, parent, null);
+		doShowDialog(dialogComponent, parent);
 	}
 
 	/**
 	 * Shows the dialog using the given parent window using the optional component for
-	 * positioning
+	 * positioning.
+	 * 
+	 * <p>Warning: this method allows user to explicitly pass a parent window and component over
+	 * which to be centered.   There is no reason to use this method in the standard workflow. 
+	 * This method exists strictly to handle future unforeseen use cases.   Use at your own 
+	 * risk of incorrectly parenting dialogs.
 	 *
-	 * @param parent the component whose window over which the given dialog will be shown
+	 * @param parent the component whose window over which the given dialog will be shown; cannot
+	 *        be null
 	 * @param dialogComponent the DialogComponentProvider object to be shown in a dialog
-	 * @param centeredOnComponent the component over which the dialog will be centered if not null
+	 * @param centeredOnComponent the component over which the dialog will be centered; cannot
+	 *        be null
 	 */
 	public static void showDialog(Window parent, DialogComponentProvider dialogComponent,
 			Component centeredOnComponent) {
+		Objects.requireNonNull(parent);
+		Objects.requireNonNull(centeredOnComponent);
 		doShowDialog(dialogComponent, parent, centeredOnComponent);
 	}
 
-	private static Window ensureParentHierarchy(Window parent, Component component) {
-		if (CollectionUtils.isAllNull(parent, component)) {
-			KeyboardFocusManager kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager();
-			return kfm.getActiveWindow();
-		}
+	private static void doShowDialog(DialogComponentProvider provider,
+			Component centeredOnComponent) {
 
-		if (SwingUtilities.isDescendingFrom(parent, component)) {
-			return parent;
-		}
+		Runnable r = () -> {
+			if (provider.isVisible()) {
+				provider.toFront();
+				return;
+			}
 
-		return getParentWindow(component);
+			Component bestCenter = getJavaActiveWindow();
+			Window bestParent = getBestParent(provider, bestCenter);
+
+			//
+			// Note: prefer the active window; allow user's choice of center component when it is
+			//       in the active window
+			// 
+			if (centeredOnComponent != null &&
+				SwingUtilities.isDescendingFrom(centeredOnComponent, bestParent)) {
+				bestCenter = centeredOnComponent;
+			}
+
+			DockingDialog dialog = DockingDialog.createDialog(bestParent, provider, bestCenter);
+			dialog.setVisible(true);
+		};
+
+		if (provider.isModal()) {
+			Swing.runNow(r);
+		}
+		else {
+			Swing.runIfSwingOrRunLater(r);
+		}
 	}
 
-	private static Component getCenterOnComponent(Window parent, Component centeredOnComponent) {
-
-		/*
-		 	This method seeks to accomplish 2 goals:
-		 		1) find a suitable component over which to center, and
-		 		2) ensure that the chosen component is in the parent hierarchy
-		
-		 */
-		Component bestComponent = centeredOnComponent;
-		if (SwingUtilities.isDescendingFrom(parent, bestComponent)) {
-			return bestComponent;
+	private static Window getBestParent(DialogComponentProvider provider, Component component) {
+		Window bestParent = getParentWindow(component);
+		if (!provider.isModal()) {
+			bestParent = getBestNonModalParent(provider, bestParent);
 		}
 
-		// by default, prefer to center over the active window
-		KeyboardFocusManager kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager();
-		Window activeWindow = kfm.getActiveWindow();
-		bestComponent = activeWindow;
-		if (SwingUtilities.isDescendingFrom(parent, bestComponent)) {
-			return bestComponent;
+		if (bestParent == null) {
+			bestParent = getJavaActiveWindow();
 		}
 
-		// The chosen component is not in the parent's hierarchy.  See if there exists a
-		// non-transient parent window for that component.
-		Window newWindow = getParentWindow(parent);
-		if (newWindow != null) {
-			// the component is safe to use; the caller of this method will validate the component
-			// we return, updating the parent as needed
-			return bestComponent;
+		if (bestParent != null && !bestParent.isShowing()) {
+			bestParent = null; // don't let non-showing windows be parents
 		}
 
-		// We were unable to find a suitable parent for the 'best' component.  Just return the
-		// parent as the thing over which to center.
-		return parent;
+		return bestParent;
+	}
 
+	private static Window getBestNonModalParent(DialogComponentProvider newProvider,
+			Window bestParent) {
+
+		Window activeWindow = getJavaActiveWindow();
+		if (!(activeWindow instanceof DockingDialog)) {
+			return bestParent;
+		}
+
+		DockingDialog dialog = (DockingDialog) activeWindow;
+		if (!dialog.isModal()) {
+
+			// Note: See issue 'E' described in getParentWindow()
+			// If we parent to a non-modal progress dialog (which is odd), when it goes away, so
+			// to do we.   Assume that non-modal dialogs in general are long lived.   We shall only
+			// enforce parenting to modal dialogs as defined below in order to prevent blocking of
+			// the non-modal dialog.
+
+			return bestParent; // not modal; assume no issues
+		}
+
+		DialogComponentProvider activeProvider = dialog.getComponent();
+		if (activeProvider == null) {
+			return bestParent;
+		}
+
+		int activeId = activeProvider.getId();
+		int newId = newProvider.getId();
+		if (newId < activeId) {
+			// the new provider is actually older than the active window--do not parent the
+			// new provider to that window
+			return bestParent;
+		}
+
+		// 
+		// The active window is modal.  We must make it the non-modal dialog's parent to
+		// prevent blocking the non-modal.
+		//
+		return dialog;
+	}
+
+	private static void doShowDialog(DialogComponentProvider provider, Window parent,
+			Component centeredOnComponent) {
+
+		Runnable r = () -> {
+			if (provider.isVisible()) {
+				provider.toFront();
+				return;
+			}
+
+			DockingDialog dialog =
+				DockingDialog.createDialog(parent, provider, centeredOnComponent);
+			dialog.setVisible(true);
+		};
+
+		if (provider.isModal()) {
+			Swing.runNow(r);
+		}
+		else {
+			Swing.runIfSwingOrRunLater(r);
+		}
 	}
 
 	private static Window getParentWindow(Component parent) {
@@ -1823,24 +1874,23 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 		 		 	-modal - Java handles this correctly, allowing the new dialog to be used
 		 		 	-non-modal - Java prevents the non-modal from being editing if not parented
 		 		 	             correctly
+		 		D -The user runs a script that shows an input dialog before the non-modal script
+		 		   dialog is shown.  If the non-modal dialog is parented to the modal input dialog,
+		 		   then the script progress dialog appears on top (which we do not want) and the
+		 		   progress dialog goes away when the input dialog is closed.
+		 		E -A long-running API shows a non-modal progress dialog.  This API then shows a
+		 		   results dialog which is also non-modal.  We do not want to parent the new dialog
+		 		   to the original dialog, since it is a progress dialog that will go away.
 		
 		
-		 	For now, the easiest mental model to use is to always prefer the active window so
-		 	that a dialog will appear in the user's view.  If we find a case where this is
+		 	For now, the easiest mental model to use is to always prefer the active non-transient
+		 	window so that a dialog will appear in the user's view.  If we find a case where this is
 		 	not desired, then document it here.
+		 	
 		 */
-
-		//
-		// Due to Use Case 'C' above, prefer dialogs as parents, so that child non-modal dialogs
-		// do not get blocked by modal dialogs.
-		//
-		if (isNonTransientWindow(parent)) {
-			return (Window) parent;
-		}
 
 		DockingWindowManager dwm = getActiveInstance();
 		Window defaultWindow = dwm != null ? dwm.getRootFrame() : null;
-
 		if (parent == null) {
 			Window w = getActiveNonTransientWindow();
 			return w == null ? defaultWindow : w;
@@ -1852,7 +1902,7 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 			//       parent of 'c' if it itself is parented to a Frame.   The issue is that
 			//       Use Case 'C' above may not work correctly.  If we find that to be the case,
 			//       then we can try changing 'Frame' to 'Window' here.
-			if (c instanceof Frame && isNonTransientWindow(c)) {
+			if (c instanceof Window && isNonTransientWindow(c)) {
 				return (Window) c;
 			}
 			c = c.getParent();
@@ -1877,16 +1927,31 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 				return false; // we have seen this in testing
 			}
 
-			return !provider.isTransient();
+			return !provider.isModal() && !provider.isTransient();
+		}
+
+		if (c instanceof Dialog) {
+			return !((Dialog) c).isModal();
 		}
 
 		return (c instanceof Window);
 	}
 
+	private static Window getJavaActiveWindow() {
+		KeyboardFocusManager kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager();
+		Window activeWindow = kfm.getActiveWindow();
+		if (activeWindow == null) {
+			return null;
+		}
+		if (!activeWindow.isShowing()) {
+			return null; // don't let non-showing windows be considered active
+		}
+		return activeWindow;
+	}
+
 	private static Window getActiveNonTransientWindow() {
 
-		KeyboardFocusManager kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager();
-		Window bestWindow = kfm.getActiveWindow();
+		Window bestWindow = getJavaActiveWindow();
 		if (bestWindow instanceof DockingDialog) {
 			// We do not want Task Dialogs becoming parents, as they will get closed when the
 			// task is finished, closing any other child dialogs, which means that dialogs such
@@ -2115,6 +2180,34 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 		objectUnderMouse = null;
 	}
 
+	/**
+	 * Shows a popup menu over the given component.  If this given component is not part of the
+	 * docking windows hierarchy, then no action is taken.
+	 * 
+	 * @param component the component 
+	 */
+	public static void showContextMenu(Component component) {
+
+		DockingWindowManager dwm = getInstance(component);
+		if (dwm == null) {
+			return;
+		}
+
+		DockableComponent dockableComponent = dwm.getDockableComponent(component);
+		if (dockableComponent == null) {
+			return;
+		}
+
+		Rectangle bounds = dockableComponent.getBounds();
+
+		bounds.x = 0;
+		bounds.y = 0;
+		int x = (int) bounds.getCenterX();
+		int y = (int) bounds.getCenterY();
+		PopupMenuContext popupContext = new PopupMenuContext(dockableComponent, new Point(x, y));
+		dockableComponent.showContextMenu(popupContext);
+	}
+
 	public void contextChanged(ComponentProvider provider) {
 
 		if (provider == null) {
@@ -2291,6 +2384,11 @@ public class DockingWindowManager implements PropertyChangeListener, Placeholder
 				this.lastActivatedPlaceholder = placeholder;
 			}
 			lastCalledTimestamp = System.currentTimeMillis();
+		}
+
+		void clear() {
+			lastActivatedPlaceholder = null;
+			lastCalledTimestamp = 0;
 		}
 	}
 }

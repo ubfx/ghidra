@@ -17,7 +17,7 @@ package ghidra.program.database.data;
 
 import java.io.IOException;
 
-import db.Record;
+import db.DBRecord;
 import ghidra.docking.settings.Settings;
 import ghidra.program.database.DBObjectCache;
 import ghidra.program.model.data.*;
@@ -55,7 +55,7 @@ abstract class CompositeDB extends DataTypeDB implements Composite {
 	 */
 	CompositeDB(DataTypeManagerDB dataMgr, DBObjectCache<DataTypeDB> cache,
 			CompositeDBAdapter compositeAdapter, ComponentDBAdapter componentAdapter,
-			Record record) {
+			DBRecord record) {
 		super(dataMgr, cache, record);
 		this.compositeAdapter = compositeAdapter;
 		this.componentAdapter = componentAdapter;
@@ -154,7 +154,7 @@ abstract class CompositeDB extends DataTypeDB implements Composite {
 	@Override
 	protected boolean refresh() {
 		try {
-			Record rec = compositeAdapter.getRecord(key);
+			DBRecord rec = compositeAdapter.getRecord(key);
 			if (rec != null) {
 				record = rec;
 				initialize();
@@ -789,4 +789,13 @@ abstract class CompositeDB extends DataTypeDB implements Composite {
 		}
 		return " pack(" + packingValue + ")";
 	}
+
+	/**
+	 * Perform any neccessary component adjustments based on
+	 * sizes and alignment of components differing from their 
+	 * specification which may be influenced by the data organization.
+	 * If this composite changes parents will not be
+	 * notified - handling this is the caller's responsibility.
+	 */
+	protected abstract void fixupComponents();
 }

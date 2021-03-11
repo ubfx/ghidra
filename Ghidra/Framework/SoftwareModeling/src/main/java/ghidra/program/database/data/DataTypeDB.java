@@ -22,7 +22,7 @@ import java.util.List;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
 
-import db.Record;
+import db.DBRecord;
 import ghidra.docking.settings.Settings;
 import ghidra.docking.settings.SettingsDefinition;
 import ghidra.program.database.DBObjectCache;
@@ -40,7 +40,7 @@ import ghidra.util.exception.NotYetImplementedException;
  */
 abstract class DataTypeDB extends DatabaseObject implements DataType, ChangeListener {
 
-	protected Record record;
+	protected DBRecord record;
 	protected final DataTypeManagerDB dataMgr;
 	private volatile Settings defaultSettings;
 	private final static SettingsDefinition[] EMPTY_DEFINITIONS = new SettingsDefinition[0];
@@ -51,7 +51,7 @@ abstract class DataTypeDB extends DatabaseObject implements DataType, ChangeList
 	private volatile Category category;
 
 	protected DataTypeDB(DataTypeManagerDB dataMgr, DBObjectCache<DataTypeDB> cache,
-			Record record) {
+			DBRecord record) {
 		super(cache, record.getKey());
 		this.dataMgr = dataMgr;
 		this.record = record;
@@ -164,13 +164,22 @@ abstract class DataTypeDB extends DatabaseObject implements DataType, ChangeList
 	 */
 	@Override
 	public Settings getDefaultSettings() {
-		validate(lock);
 		Settings localDefaultSettings = defaultSettings;
-		if (localDefaultSettings == null) {
-			localDefaultSettings = new SettingsDBManager(dataMgr, this, key);
-			defaultSettings = localDefaultSettings;
+		if (localDefaultSettings != null && !isInvalid()) {
+			return localDefaultSettings;
 		}
-		return localDefaultSettings;
+		lock.acquire();
+		try {
+			checkIsValid();
+			if (defaultSettings == null) {
+				defaultSettings = new SettingsDBManager(dataMgr, this, key);
+			}
+			return defaultSettings;
+		}
+		finally {
+			lock.release();
+		}
+
 	}
 
 	/**
@@ -286,15 +295,24 @@ abstract class DataTypeDB extends DatabaseObject implements DataType, ChangeList
 
 	@Override
 	public CategoryPath getCategoryPath() {
-		validate(lock);
-		if (category == null) {
-			category = dataMgr.getCategory(doGetCategoryID());
+		Category cat = category;
+		if (cat != null && !isInvalid()) {
+			return cat.getCategoryPath();
 		}
-		if (category == null) {
-			category = dataMgr.getRootCategory();
-			return CategoryPath.ROOT;
+		lock.acquire();
+		try {
+			checkIsValid();
+			if (category == null) {
+				category = dataMgr.getCategory(doGetCategoryID());
+			}
+			if (category == null) {
+				category = dataMgr.getRootCategory();
+			}
+			return category.getCategoryPath();
 		}
-		return category.getCategoryPath();
+		finally {
+			lock.release();
+		}
 	}
 
 	@Override

@@ -218,8 +218,12 @@ public class GhidraPythonInterpreter extends InteractiveInterpreter {
 					InetAddress localhost = InetAddress.getLocalHost();
 					new Socket(localhost, PyDevUtils.PYDEV_REMOTE_DEBUGGER_PORT).close();
 					Msg.info(this, "Python debugger found");
-					exec("import pydevd; pydevd.settrace(host=\"" + localhost.getHostName() +
+					StringBuilder dbgCmds = new StringBuilder();
+					dbgCmds.append("import pydevd;");
+					dbgCmds.append("pydevd.threadingCurrentThread().__pydevd_main_thread = True;");
+					dbgCmds.append("pydevd.settrace(host=\"" + localhost.getHostName() +
 						"\", port=" + PyDevUtils.PYDEV_REMOTE_DEBUGGER_PORT + ", suspend=False);");
+					exec(dbgCmds.toString());
 					Msg.info(this, "Connected to a python debugger.");
 				}
 				catch (IOException e) {
@@ -245,8 +249,14 @@ public class GhidraPythonInterpreter extends InteractiveInterpreter {
 	 * @param str The string to print.
 	 */
 	void printErr(String str) {
-		getSystemState().stderr.invoke("write", new PyString(str + "\n"));
-		getSystemState().stderr.invoke("flush");
+		try {
+			getSystemState().stderr.invoke("write", new PyString(str + "\n"));
+			getSystemState().stderr.invoke("flush");
+		}
+		catch (PyException e) {
+			// if the python interp state's stdin/stdout/stderr is messed up, it can throw an error 
+			Msg.error(this, "Failed to write to stderr", e);
+		}
 	}
 
 	/**

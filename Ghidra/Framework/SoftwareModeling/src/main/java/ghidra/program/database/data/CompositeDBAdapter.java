@@ -95,7 +95,7 @@ abstract class CompositeDBAdapter {
 	 * @param handle handle to prior version of the database.
 	 * @return the read only Composite data type table adapter
 	 * @throws VersionException if a read only adapter can't be obtained for the database handle's version.
-	 * @throws IOException 
+	 * @throws IOException if IO error occurs
 	 */
 	static CompositeDBAdapter findReadOnlyAdapter(DBHandle handle)
 			throws VersionException, IOException {
@@ -136,7 +136,7 @@ abstract class CompositeDBAdapter {
 			RecordIterator it = oldAdapter.getRecords();
 			while (it.hasNext()) {
 				monitor.checkCanceled();
-				Record rec = it.next();
+				DBRecord rec = it.next();
 				tmpAdapter.updateRecord(rec, false);
 			}
 			oldAdapter.deleteTable(handle);
@@ -144,7 +144,7 @@ abstract class CompositeDBAdapter {
 			it = tmpAdapter.getRecords();
 			while (it.hasNext()) {
 				monitor.checkCanceled();
-				Record rec = it.next();
+				DBRecord rec = it.next();
 				newAdapter.updateRecord(rec, false);
 			}
 			return newAdapter;
@@ -172,7 +172,7 @@ abstract class CompositeDBAdapter {
 	 * @return the database record for this data type.
 	 * @throws IOException if the database can't be accessed.
 	 */
-	abstract Record createRecord(String name, String comments, boolean isUnion, long categoryID,
+	abstract DBRecord createRecord(String name, String comments, boolean isUnion, long categoryID,
 			int length, long sourceArchiveID, long sourceDataTypeID, long lastChangeTime,
 			int internalAlignment, int externalAlignment) throws IOException;
 
@@ -182,7 +182,7 @@ abstract class CompositeDBAdapter {
 	 * @return the record for the composite (structure or union) data type.
 	 * @throws IOException if the database can't be accessed.
 	 */
-	abstract Record getRecord(long dataTypeID) throws IOException;
+	abstract DBRecord getRecord(long dataTypeID) throws IOException;
 
 	/**
 	 * Gets an iterator over all composite (structure and union) data type records.
@@ -194,11 +194,11 @@ abstract class CompositeDBAdapter {
 	/**
 	 * Updates the composite data type table with the provided record.
 	 * @param record the new record
-	 * @param setLastChangedTime true means change the last change time in the record to the 
+	 * @param setLastChangeTime true means change the last change time in the record to the 
 	 * current time before putting the record in the database.
 	 * @throws IOException if the database can't be accessed.
 	 */
-	abstract void updateRecord(Record record, boolean setLastChangeTime) throws IOException;
+	abstract void updateRecord(DBRecord record, boolean setLastChangeTime) throws IOException;
 
 	/**
 	 * Removes the composite data type record with the specified ID.
@@ -218,10 +218,11 @@ abstract class CompositeDBAdapter {
 	/**
 	 * Gets all the composite data types that are contained in the category that has the indicated ID.
 	 * @param categoryID the category whose composite data types are wanted.
-	 * @return an array of IDs for the composite data types in the category.
+	 * @return an array of IDs as LongField values within Field array for the 
+	 * composite data types in the category.
 	 * @throws IOException if the database can't be accessed.
 	 */
-	abstract long[] getRecordIdsInCategory(long categoryID) throws IOException;
+	abstract Field[] getRecordIdsInCategory(long categoryID) throws IOException;
 
 	/**
 	 * Gets an array with the IDs of all data types in the composite table that were derived
@@ -230,9 +231,16 @@ abstract class CompositeDBAdapter {
 	 * @return the array data type IDs.
 	 * @throws IOException if the database can't be accessed.
 	 */
-	abstract long[] getRecordIdsForSourceArchive(long archiveID) throws IOException;
+	abstract Field[] getRecordIdsForSourceArchive(long archiveID) throws IOException;
 
-	abstract Record getRecordWithIDs(UniversalID sourceID, UniversalID datatypeID)
+	/**
+	 * Get composite record whoose sourceID and datatypeID match the specified Universal IDs.
+	 * @param sourceID universal source archive ID
+	 * @param datatypeID universal datatype ID
+	 * @return composite record found or null
+	 * @throws IOException if IO error occurs
+	 */
+	abstract DBRecord getRecordWithIDs(UniversalID sourceID, UniversalID datatypeID)
 			throws IOException;
 
 }

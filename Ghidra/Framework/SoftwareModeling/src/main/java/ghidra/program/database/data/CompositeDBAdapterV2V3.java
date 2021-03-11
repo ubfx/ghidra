@@ -54,9 +54,10 @@ class CompositeDBAdapterV2V3 extends CompositeDBAdapter {
 	static final int V2_COMPOSITE_EXTERNAL_ALIGNMENT_COL = 11;
 
 	static final Schema V2_COMPOSITE_SCHEMA = new Schema(VERSION, "Data Type ID",
-		new Class[] { StringField.class, StringField.class, BooleanField.class, LongField.class,
-			IntField.class, IntField.class, LongField.class, LongField.class, LongField.class,
-			LongField.class, IntField.class, IntField.class },
+		new Field[] { StringField.INSTANCE, StringField.INSTANCE, BooleanField.INSTANCE,
+			LongField.INSTANCE, IntField.INSTANCE, IntField.INSTANCE, LongField.INSTANCE,
+			LongField.INSTANCE, LongField.INSTANCE, LongField.INSTANCE, IntField.INSTANCE,
+			IntField.INSTANCE },
 		new String[] { "Name", "Comment", "Is Union", "Category ID", "Length",
 			"Number Of Components", "Source Archive ID", "Source Data Type ID", "Source Sync Time",
 			"Last Change Time", "Internal Alignment", "External Alignment" });
@@ -122,7 +123,7 @@ class CompositeDBAdapterV2V3 extends CompositeDBAdapter {
 	}
 
 	@Override
-	public Record createRecord(String name, String comments, boolean isUnion, long categoryID,
+	public DBRecord createRecord(String name, String comments, boolean isUnion, long categoryID,
 			int length, long sourceArchiveID, long sourceDataTypeID, long lastChangeTime,
 			int internalAlignment, int externalAlignment) throws IOException {
 		if (readOnly) {
@@ -136,7 +137,7 @@ class CompositeDBAdapterV2V3 extends CompositeDBAdapter {
 //			tableKey = DataManager.VOID_DATATYPE_ID +1;
 //		}
 		long key = DataTypeManagerDB.createKey(DataTypeManagerDB.COMPOSITE, tableKey);
-		Record record = CompositeDBAdapter.COMPOSITE_SCHEMA.createRecord(key);
+		DBRecord record = CompositeDBAdapter.COMPOSITE_SCHEMA.createRecord(key);
 
 		record.setString(V2_COMPOSITE_NAME_COL, name);
 		record.setString(V2_COMPOSITE_COMMENT_COL, comments);
@@ -155,7 +156,7 @@ class CompositeDBAdapterV2V3 extends CompositeDBAdapter {
 	}
 
 	@Override
-	public Record getRecord(long dataTypeID) throws IOException {
+	public DBRecord getRecord(long dataTypeID) throws IOException {
 		return compositeTable.getRecord(dataTypeID);
 	}
 
@@ -165,7 +166,7 @@ class CompositeDBAdapterV2V3 extends CompositeDBAdapter {
 	}
 
 	@Override
-	public void updateRecord(Record record, boolean setLastChangeTime) throws IOException {
+	public void updateRecord(DBRecord record, boolean setLastChangeTime) throws IOException {
 		if (readOnly) {
 			throw new ReadOnlyException();
 		}
@@ -190,24 +191,24 @@ class CompositeDBAdapterV2V3 extends CompositeDBAdapter {
 	}
 
 	@Override
-	public long[] getRecordIdsInCategory(long categoryID) throws IOException {
+	public Field[] getRecordIdsInCategory(long categoryID) throws IOException {
 		return compositeTable.findRecords(new LongField(categoryID),
 			CompositeDBAdapter.COMPOSITE_CAT_COL);
 	}
 
 	@Override
-	long[] getRecordIdsForSourceArchive(long archiveID) throws IOException {
+	Field[] getRecordIdsForSourceArchive(long archiveID) throws IOException {
 		return compositeTable.findRecords(new LongField(archiveID),
 			V2_COMPOSITE_SOURCE_ARCHIVE_ID_COL);
 	}
 
 	@Override
-	Record getRecordWithIDs(UniversalID sourceID, UniversalID datatypeID) throws IOException {
-		long[] keys = compositeTable.findRecords(new LongField(datatypeID.getValue()),
+	DBRecord getRecordWithIDs(UniversalID sourceID, UniversalID datatypeID) throws IOException {
+		Field[] keys = compositeTable.findRecords(new LongField(datatypeID.getValue()),
 			V2_COMPOSITE_UNIVERSAL_DT_ID_COL);
 
 		for (int i = 0; i < keys.length; i++) {
-			Record record = compositeTable.getRecord(keys[i]);
+			DBRecord record = compositeTable.getRecord(keys[i]);
 			if (record.getLongValue(V2_COMPOSITE_SOURCE_ARCHIVE_ID_COL) == sourceID.getValue()) {
 				return record;
 			}

@@ -22,7 +22,6 @@ import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.apache.felix.framework.FrameworkFactory;
@@ -63,8 +62,7 @@ public class BundleHost {
 	private static final String SAVE_STATE_TAG_ACTIVE = "BundleHost_ACTIVE";
 	private static final String SAVE_STATE_TAG_SYSTEM = "BundleHost_SYSTEM";
 
-	Map<ResourceFile, GhidraBundle> fileToBundleMap = new HashMap<>();
-	Map<String, GhidraBundle> bundleLocationToBundleMap = new HashMap<>();
+	private final BundleMap bundleMap = new BundleMap();
 
 	BundleContext frameworkBundleContext;
 	Framework felixFramework;
@@ -93,7 +91,7 @@ public class BundleHost {
 	 * @return false if the bundle was already enabled
 	 */
 	public boolean enable(ResourceFile bundleFile) {
-		GhidraBundle bundle = fileToBundleMap.get(bundleFile);
+		GhidraBundle bundle = bundleMap.get(bundleFile);
 		if (bundle == null) {
 			bundle = add(bundleFile, true, false);
 			return true;
@@ -139,7 +137,7 @@ public class BundleHost {
 	 * @return a {@link GhidraBundle} or {@code null}
 	 */
 	public GhidraBundle getExistingGhidraBundle(ResourceFile bundleFile) {
-		GhidraBundle bundle = fileToBundleMap.get(bundleFile);
+		GhidraBundle bundle = bundleMap.get(bundleFile);
 		if (bundle == null) {
 			Msg.showError(this, null, "ghidra bundle cache",
 				"getExistingGhidraBundle expected a GhidraBundle created at " + bundleFile +
@@ -156,7 +154,7 @@ public class BundleHost {
 	 * @return a {@link GhidraBundle} or {@code null}
 	 */
 	public GhidraBundle getGhidraBundle(ResourceFile bundleFile) {
-		return fileToBundleMap.get(bundleFile);
+		return bundleMap.get(bundleFile);
 	}
 
 	private static GhidraBundle createGhidraBundle(BundleHost bundleHost, ResourceFile bundleFile,
@@ -189,23 +187,9 @@ public class BundleHost {
 	 */
 	public GhidraBundle add(ResourceFile bundleFile, boolean enabled, boolean systemBundle) {
 		GhidraBundle bundle = createGhidraBundle(this, bundleFile, enabled, systemBundle);
-		fileToBundleMap.put(bundleFile, bundle);
-		bundleLocationToBundleMap.put(bundle.getLocationIdentifier(), bundle);
+		bundleMap.add(bundle);
 		fireBundleAdded(bundle);
 		return bundle;
-	}
-
-	private Set<ResourceFile> dedupeBundleFiles(List<ResourceFile> bundleFiles) {
-		Set<ResourceFile> dedupedBundleFiles = new HashSet<>(bundleFiles);
-		Iterator<ResourceFile> bundleFileIterator = dedupedBundleFiles.iterator();
-		while (bundleFileIterator.hasNext()) {
-			ResourceFile bundleFile = bundleFileIterator.next();
-			if (fileToBundleMap.containsKey(bundleFile)) {
-				bundleFileIterator.remove();
-				Msg.warn(this, "adding an already managed bundle: " + bundleFile.getAbsolutePath());
-			}
-		}
-		return dedupedBundleFiles;
 	}
 
 	/**
@@ -219,17 +203,8 @@ public class BundleHost {
 	 */
 	public Collection<GhidraBundle> add(List<ResourceFile> bundleFiles, boolean enabled,
 			boolean systemBundle) {
-		Set<ResourceFile> dedupedBundleFiles = dedupeBundleFiles(bundleFiles);
-		Map<ResourceFile, GhidraBundle> newBundleMap = dedupedBundleFiles.stream()
-				.collect(Collectors.toUnmodifiableMap(Function.identity(),
-					bundleFile -> createGhidraBundle(BundleHost.this, bundleFile, enabled,
-						systemBundle)));
-		fileToBundleMap.putAll(newBundleMap);
-		bundleLocationToBundleMap.putAll(newBundleMap.values()
-				.stream()
-				.collect(Collectors.toUnmodifiableMap(GhidraBundle::getLocationIdentifier,
-					Function.identity())));
-		Collection<GhidraBundle> newBundles = newBundleMap.values();
+		Collection<GhidraBundle> newBundles = bundleMap.computeAllIfAbsent(bundleFiles,
+			bundleFile -> createGhidraBundle(BundleHost.this, bundleFile, enabled, systemBundle));
 		fireBundlesAdded(newBundles);
 		return newBundles;
 	}
@@ -240,10 +215,7 @@ public class BundleHost {
 	 * @param bundles the bundles to add
 	 */
 	private void add(List<GhidraBundle> bundles) {
-		for (GhidraBundle bundle : bundles) {
-			fileToBundleMap.put(bundle.getFile(), bundle);
-			bundleLocationToBundleMap.put(bundle.getLocationIdentifier(), bundle);
-		}
+		bundleMap.addAll(bundles);
 		fireBundlesAdded(bundles);
 	}
 
@@ -253,8 +225,7 @@ public class BundleHost {
 	 * @param bundleFile the file of the bundle to remove
 	 */
 	public void remove(ResourceFile bundleFile) {
-		GhidraBundle bundle = fileToBundleMap.remove(bundleFile);
-		bundleLocationToBundleMap.remove(bundle.getLocationIdentifier());
+		GhidraBundle bundle = bundleMap.remove(bundleFile);
 		fireBundleRemoved(bundle);
 	}
 
@@ -264,8 +235,7 @@ public class BundleHost {
 	 * @param bundleLocation the location id of the bundle to remove
 	 */
 	public void remove(String bundleLocation) {
-		GhidraBundle bundle = bundleLocationToBundleMap.remove(bundleLocation);
-		fileToBundleMap.remove(bundle.getFile());
+		GhidraBundle bundle = bundleMap.remove(bundleLocation);
 		fireBundleRemoved(bundle);
 	}
 
@@ -275,8 +245,7 @@ public class BundleHost {
 	 * @param bundle the bundle to remove
 	 */
 	public void remove(GhidraBundle bundle) {
-		fileToBundleMap.remove(bundle.getFile());
-		bundleLocationToBundleMap.remove(bundle.getLocationIdentifier());
+		bundleMap.remove(bundle);
 		fireBundleRemoved(bundle);
 	}
 
@@ -286,10 +255,7 @@ public class BundleHost {
 	 * @param bundles the bundles to remove
 	 */
 	public void remove(Collection<GhidraBundle> bundles) {
-		for (GhidraBundle bundle : bundles) {
-			fileToBundleMap.remove(bundle.getFile());
-			bundleLocationToBundleMap.remove(bundle.getLocationIdentifier());
-		}
+		bundleMap.removeAll(bundles);
 		fireBundlesRemoved(bundles);
 	}
 
@@ -338,7 +304,7 @@ public class BundleHost {
 	 * @return all the bundles
 	 */
 	public Collection<GhidraBundle> getGhidraBundles() {
-		return fileToBundleMap.values();
+		return bundleMap.getGhidraBundles();
 	}
 
 	/**
@@ -347,7 +313,7 @@ public class BundleHost {
 	 * @return all the bundle files
 	 */
 	public Collection<ResourceFile> getBundleFiles() {
-		return fileToBundleMap.keySet();
+		return bundleMap.getBundleFiles();
 	}
 
 	void dumpLoadedBundles() {
@@ -691,15 +657,9 @@ public class BundleHost {
 	public void activateAll(Collection<GhidraBundle> bundles, TaskMonitor monitor,
 			PrintWriter console) {
 
-		List<GhidraBundle> availableBundles = getGhidraBundles().stream()
-				.filter(GhidraBundle::isEnabled)
-				.collect(Collectors.toList());
-
-		BundleDependencyGraph dependencyGraph =
-			new BundleDependencyGraph(availableBundles, bundles, monitor);
+		BundleDependencyGraph dependencyGraph = new BundleDependencyGraph(bundles, monitor);
 
 		monitor.setMaximum(dependencyGraph.vertexSet().size());
-
 		for (GhidraBundle bundle : dependencyGraph.inTopologicalOrder()) {
 			if (monitor.isCancelled()) {
 				break;
@@ -728,21 +688,25 @@ public class BundleHost {
 	 */
 	public void activateInStages(Collection<GhidraBundle> bundles, TaskMonitor monitor,
 			PrintWriter console) {
-		List<GhidraBundle> bundlesRemaining = new ArrayList<>(bundles);
+		Map<GhidraBundle, List<BundleRequirement>> requirementMap = new HashMap<>();
+		for (GhidraBundle bundle : bundles) {
+			try {
+				requirementMap.put(bundle, bundle.getAllRequirements());
+			}
+			catch (GhidraBundleException e) {
+				fireBundleException(e);
+			}
+		}
+		List<GhidraBundle> bundlesRemaining = new ArrayList<>(requirementMap.keySet());
 
 		monitor.setMaximum(bundlesRemaining.size());
 		while (!bundlesRemaining.isEmpty() && !monitor.isCancelled()) {
-			List<GhidraBundle> resolvableBundles = bundlesRemaining.stream().filter(bundle -> {
-				try {
-					return canResolveAll(bundle.getAllRequirements());
-				}
-				catch (GhidraBundleException e) {
-					// failure in last round will set fireBundleException
-				}
-				return false;
-			}).collect(Collectors.toList());
+			List<GhidraBundle> resolvableBundles = bundlesRemaining.stream()
+					.filter(bundle -> canResolveAll(requirementMap.get(bundle)))
+					.collect(Collectors.toList());
 			if (resolvableBundles.isEmpty()) {
-				// final round, try everything we couldn't resolve to generate errors
+				// final round, try everything that hasn't already been eliminated.
+				// this can generate helpful error messages
 				resolvableBundles = bundlesRemaining;
 				bundlesRemaining = Collections.emptyList();
 			}
@@ -863,7 +827,7 @@ public class BundleHost {
 			boolean isEnabled = bundleIsEnabled[i];
 			boolean isActive = bundleIsActive[i];
 			boolean isSystem = bundleIsSystem[i];
-			GhidraBundle bundle = fileToBundleMap.get(bundleFile);
+			GhidraBundle bundle = bundleMap.get(bundleFile);
 			if (bundle != null) {
 				if (isEnabled != bundle.isEnabled()) {
 					bundle.setEnabled(isEnabled);
@@ -902,14 +866,15 @@ public class BundleHost {
 	 * @param saveState the state object
 	 */
 	public void saveManagedBundleState(SaveState saveState) {
-		int numBundles = fileToBundleMap.size();
+		Collection<GhidraBundle> bundles = bundleMap.getGhidraBundles();
+		int numBundles = bundles.size();
 		String[] bundleFiles = new String[numBundles];
 		boolean[] bundleIsEnabled = new boolean[numBundles];
 		boolean[] bundleIsActive = new boolean[numBundles];
 		boolean[] bundleIsSystem = new boolean[numBundles];
 
 		int index = 0;
-		for (GhidraBundle bundle : fileToBundleMap.values()) {
+		for (GhidraBundle bundle : bundles) {
 			bundleFiles[index] = generic.util.Path.toPathString(bundle.getFile());
 			bundleIsEnabled[index] = bundle.isEnabled();
 			bundleIsActive[index] = bundle.isActive();
@@ -927,18 +892,29 @@ public class BundleHost {
 		// exists only to be distinguished by id
 	}
 
-	private static class BundleDependencyGraph
-			extends DirectedMultigraph<GhidraBundle, Dependency> {
+	/**
+	 *	Utility class to build a dependency graph from bundles where capabilities map to requirements.
+	 */
+	private class BundleDependencyGraph extends DirectedMultigraph<GhidraBundle, Dependency> {
 		final Map<GhidraBundle, List<BundleCapability>> capabilityMap = new HashMap<>();
 		final List<GhidraBundle> availableBundles;
 		final TaskMonitor monitor;
 
-		BundleDependencyGraph(List<GhidraBundle> availableBundles,
-				Collection<GhidraBundle> startingBundles, TaskMonitor monitor) {
+		BundleDependencyGraph(Collection<GhidraBundle> startingBundles, TaskMonitor monitor) {
 			super(null, null, false);
-			this.availableBundles = availableBundles;
 			this.monitor = monitor;
 
+			// maintain a list of bundles available for resolution, starting with all of the enabled bundles
+			this.availableBundles = new ArrayList<>();
+			for (GhidraBundle bundle : getGhidraBundles()) {
+				if (bundle.isEnabled()) {
+					addToAvailable(bundle);
+				}
+			}
+			// An edge A->B indicates that the capabilities of A resolve some requirement(s) of B
+
+			// "front" accumulates bundles and links to bundles already in the graph that they provide capabilities for.
+			//   e.g.  if front[A]=[B,...] then A->B, B is already in the graph, and we will add A next iteration. 
 			Map<GhidraBundle, Set<GhidraBundle>> front = new HashMap<>();
 			for (GhidraBundle bundle : startingBundles) {
 				front.put(bundle, null);
@@ -951,6 +927,7 @@ public class BundleHost {
 				for (GhidraBundle bundle : front.keySet()) {
 					resolve(bundle, newFront);
 				}
+
 				handleBackEdges(newFront);
 				front = newFront;
 			}
@@ -969,7 +946,9 @@ public class BundleHost {
 				GhidraBundle source = entry.getKey();
 				if (containsVertex(source)) {
 					for (GhidraBundle destination : entry.getValue()) {
-						addEdge(source, destination, new Dependency());
+						if (source != destination) {
+							addEdge(source, destination, new Dependency());
+						}
 					}
 					newFrontIter.remove();
 				}
@@ -979,31 +958,48 @@ public class BundleHost {
 		void addFront(Map<GhidraBundle, Set<GhidraBundle>> front) {
 			for (Entry<GhidraBundle, Set<GhidraBundle>> e : front.entrySet()) {
 				GhidraBundle source = e.getKey();
-				availableBundles.add(source);
-				addVertex(source);
-				Set<GhidraBundle> destinations = e.getValue();
-				if (destinations != null) {
-					for (GhidraBundle destination : destinations) {
-						addEdge(source, destination, new Dependency());
+				if (addToAvailable(source)) {
+					addVertex(source);
+					Set<GhidraBundle> destinations = e.getValue();
+					if (destinations != null) {
+						for (GhidraBundle destination : destinations) {
+							addEdge(source, destination, new Dependency());
+						}
 					}
 				}
 			}
 		}
 
+		boolean addToAvailable(GhidraBundle bundle) {
+			try {
+				capabilityMap.put(bundle, bundle.getAllCapabilities());
+				availableBundles.add(bundle);
+				return true;
+			}
+			catch (GhidraBundleException ex) {
+				fireBundleException(ex);
+				return false;
+			}
+		}
+
+		// populate newFront with edges depBundle -> bundle,
+		// where depBundle has a capability that resolves a requirement of bundle
 		void resolve(GhidraBundle bundle, Map<GhidraBundle, Set<GhidraBundle>> newFront) {
 			List<BundleRequirement> requirements;
 			try {
 				requirements = new ArrayList<>(bundle.getAllRequirements());
+				if (requirements.isEmpty()) {
+					return;
+				}
 			}
 			catch (GhidraBundleException e) {
-				throw new RuntimeException(e);
-			}
-			if (requirements.isEmpty()) {
+				fireBundleException(e);
+				removeVertex(bundle);
 				return;
 			}
 
 			for (GhidraBundle depBundle : availableBundles) {
-				for (BundleCapability capability : getCapabilities(depBundle)) {
+				for (BundleCapability capability : capabilityMap.get(depBundle)) {
 					if (monitor.isCancelled()) {
 						return;
 					}
@@ -1020,18 +1016,8 @@ public class BundleHost {
 					}
 				}
 			}
-		}
-
-		List<BundleCapability> getCapabilities(GhidraBundle bundle) {
-			return capabilityMap.computeIfAbsent(bundle, b -> {
-				try {
-					return b.getAllCapabilities();
-				}
-				catch (GhidraBundleException e) {
-					Msg.error(this, "getting capabilities", e);
-					return null;
-				}
-			});
+			// if requirements remain, some will be resolved by system 
+			//  and others will generate helpful errors for the user during activation
 		}
 	}
 
@@ -1062,7 +1048,7 @@ public class BundleHost {
 			GhidraBundle bundle;
 			switch (event.getType()) {
 				case BundleEvent.STARTED:
-					bundle = bundleLocationToBundleMap.get(osgiBundle.getLocation());
+					bundle = bundleMap.getBundleAtLocation(osgiBundle.getLocation());
 					if (bundle != null) {
 						fireBundleActivationChange(bundle, true);
 					}
@@ -1074,7 +1060,7 @@ public class BundleHost {
 					break;
 				// force "inactive" updates for all other states
 				default:
-					bundle = bundleLocationToBundleMap.get(osgiBundle.getLocation());
+					bundle = bundleMap.getBundleAtLocation(osgiBundle.getLocation());
 					if (bundle != null) {
 						fireBundleActivationChange(bundle, false);
 					}

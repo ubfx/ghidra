@@ -24,13 +24,13 @@ import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.address.OverlayAddressSpace;
 import ghidra.program.model.lang.Language;
 import ghidra.program.util.LanguageTranslator;
-import ghidra.util.exception.AssertException;
 import ghidra.util.exception.DuplicateNameException;
 
 class OverlaySpaceAdapterDB {
 	private static String TABLE_NAME = "Overlay Spaces";
 	static final Schema SCHEMA = new Schema(0, "ID",
-		new Class[] { StringField.class, StringField.class, LongField.class, LongField.class },
+		new Field[] { StringField.INSTANCE, StringField.INSTANCE, LongField.INSTANCE,
+			LongField.INSTANCE },
 		new String[] { "Overlay Space", "Template Space", "Minimum Offset", "Maximum Offset" });
 
 	private static final int OV_SPACE_NAME_COL = 0;
@@ -54,7 +54,7 @@ class OverlaySpaceAdapterDB {
 		if (table != null) {
 			RecordIterator it = table.iterator();
 			while (it.hasNext()) {
-				Record rec = it.next();
+				DBRecord rec = it.next();
 				String spaceName = rec.getString(OV_SPACE_NAME_COL);
 				String templateSpaceName = rec.getString(OV_SPACE_BASE_COL);
 				long minOffset = rec.getLongValue(OV_MIN_OFFSET_COL);
@@ -62,12 +62,12 @@ class OverlaySpaceAdapterDB {
 				AddressSpace space = factory.getAddressSpace(templateSpaceName);
 				try {
 					OverlayAddressSpace sp =
-						factory.addOverlayAddressSpace(spaceName, space, minOffset, maxOffset);
+						factory.addOverlayAddressSpace(spaceName, true, space, minOffset, maxOffset);
 					sp.setDatabaseKey(rec.getKey());
 				}
-				catch (DuplicateNameException e) {
-					throw new AssertException(
-						"Should not have duplicateNameException when recreating factory");
+				catch (IllegalArgumentException e) {
+					throw new RuntimeException(
+						"Unexpected error initializing overlay address spaces", e);
 				}
 			}
 		}
@@ -86,7 +86,7 @@ class OverlaySpaceAdapterDB {
 		if (table == null) {
 			table = db.createTable(TABLE_NAME, SCHEMA);
 		}
-		Record rec = SCHEMA.createRecord(table.getKey());
+		DBRecord rec = SCHEMA.createRecord(table.getKey());
 		rec.setString(0, ovSpace.getName());
 		rec.setString(1, ovSpace.getOverlayedSpace().getName());
 		rec.setLongValue(OV_MIN_OFFSET_COL, ovSpace.getMinOffset());
@@ -105,7 +105,7 @@ class OverlaySpaceAdapterDB {
 		if (table != null) {
 			RecordIterator it = table.iterator();
 			while (it.hasNext()) {
-				Record rec = it.next();
+				DBRecord rec = it.next();
 				String spaceName = rec.getString(0);
 				if (name.equals(spaceName)) {
 					it.delete();
@@ -127,7 +127,7 @@ class OverlaySpaceAdapterDB {
 		if (table != null) {
 			RecordIterator it = table.iterator();
 			while (it.hasNext()) {
-				Record rec = it.next();
+				DBRecord rec = it.next();
 				OverlayAddressSpace space = map.remove(rec.getKey());
 				if (space != null) {
 					//maxId = Math.max(maxId, space.getUnique());
@@ -140,7 +140,7 @@ class OverlaySpaceAdapterDB {
 						}
 						catch (DuplicateNameException e) {
 							throw new RuntimeException(
-								"Unexpected error1 updating overlay address spaces");
+								"Unexpected error updating overlay address spaces", e);
 						}
 					}
 				}
@@ -151,13 +151,14 @@ class OverlaySpaceAdapterDB {
 					AddressSpace origSpace =
 						factory.getAddressSpace(rec.getString(OV_SPACE_BASE_COL));
 					try {
-						space = factory.addOverlayAddressSpace(spaceName, origSpace, minOffset,
+						space = factory.addOverlayAddressSpace(spaceName, true, origSpace,
+							minOffset,
 							maxOffset);
 						space.setDatabaseKey(rec.getKey());
 					}
-					catch (DuplicateNameException e) {
+					catch (IllegalArgumentException e) {
 						throw new RuntimeException(
-							"Unexpected error2 updating overlay address spaces");
+							"Unexpected error updating overlay address spaces", e);
 					}
 				}
 			}
@@ -172,7 +173,7 @@ class OverlaySpaceAdapterDB {
 		if (table != null) {
 			RecordIterator it = table.iterator();
 			while (it.hasNext()) {
-				Record rec = it.next();
+				DBRecord rec = it.next();
 				String spaceName = rec.getString(0);
 				if (oldName.equals(spaceName)) {
 					it.delete();
@@ -201,7 +202,7 @@ class OverlaySpaceAdapterDB {
 		if (table != null) {
 			RecordIterator it = table.iterator();
 			while (it.hasNext()) {
-				Record rec = it.next();
+				DBRecord rec = it.next();
 				String oldUnderlyingSpaceName = rec.getString(OV_SPACE_BASE_COL);
 				AddressSpace space = addrFactory.getAddressSpace(oldUnderlyingSpaceName);
 				if (space != null && space.isNonLoadedMemorySpace()) {

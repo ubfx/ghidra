@@ -142,7 +142,7 @@ public class PointerDataType extends BuiltIn implements Pointer {
 	}
 
 	@Override
-	public final DataType clone(DataTypeManager dtm) {
+	public final Pointer clone(DataTypeManager dtm) {
 		if (dtm == getDataTypeManager()) {
 			return this;
 		}
@@ -403,11 +403,12 @@ public class PointerDataType extends BuiltIn implements Pointer {
 		try {
 			switch (dataLen) {
 				case 2: // near pointer
-					offset = (int) buf.getVarLengthUnsignedInt(0, dataLen);
+					offset = buf.getUnsignedShort(0);
 					break;
 				case 4: // far pointer
-					segment = buf.getUnsignedShort(0);
-					offset = buf.getUnsignedShort(2);
+					long value = buf.getUnsignedInt(0);
+					segment = (int) (value >> 16);
+					offset = (int) (value & 0xffff);
 					break;
 				default:
 					return null;

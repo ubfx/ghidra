@@ -18,7 +18,7 @@ package ghidra.program.database.code;
 import java.util.ArrayList;
 import java.util.List;
 
-import db.Record;
+import db.DBRecord;
 import ghidra.docking.settings.Settings;
 import ghidra.docking.settings.SettingsDefinition;
 import ghidra.program.database.DBObjectCache;
@@ -87,7 +87,7 @@ class DataDB extends CodeUnitDB implements Data {
 	}
 
 	@Override
-	protected boolean refresh(Record record) {
+	protected boolean refresh(DBRecord record) {
 		if (componentCache != null) {
 			componentCache.invalidate();
 		}
@@ -96,13 +96,15 @@ class DataDB extends CodeUnitDB implements Data {
 	}
 
 	@Override
-	protected boolean hasBeenDeleted(Record rec) {
+	protected boolean hasBeenDeleted(DBRecord rec) {
 		if (dataType == DataType.DEFAULT) {
 			return rec != null || !codeMgr.isUndefined(address, addr);
 		}
 		DataType dt;
 		if (rec != null) {
 			// ensure that record provided corresponds to a DataDB record
+			// since following an undo/redo the record could correspond to
+			// a different type of code unit (hopefully with a different record schema)
 			if (!rec.hasSameSchema(DataDBAdapter.DATA_SCHEMA)) {
 				return true;
 			}

@@ -49,6 +49,7 @@ IsDefined:
 DefineTest:
 	( '(' test=DefineTest ')'
 	| symref=DefineSym OP_EQUAL value=(STRING|intvalue|ID)
+	| symref=DefineSym OP_NOTEQUAL value=(STRING|intvalue|ID)
 	| isdefined=IsDefined )  ( (OP_BOOL_AND andtest=DefineTest) | (OP_BOOL_OR ortest=DefineTest) )?
 ;
 
@@ -97,8 +98,9 @@ aligndef :
 ;
 
 tokendef :
-	'define' 'token' ID '(' size=integerValue ')' fields=tokenprop ';' // {}
+	'define' 'token' ID '(' size=integerValue ')' ( 'endian' '=' (is_big?='big' | is_little?='little' ))?  fields=tokenprop ';' // {}
 ;
+
 //
 tokenprop:
 	 tokens+=(

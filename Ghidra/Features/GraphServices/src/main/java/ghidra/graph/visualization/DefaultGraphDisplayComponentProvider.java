@@ -41,7 +41,6 @@ public class DefaultGraphDisplayComponentProvider extends ComponentProviderAdapt
 		setIcon(DefaultDisplayGraphIcons.PROGRAM_GRAPH_ICON);
 		setTransient();
 		setWindowGroup(WINDOW_GROUP);
-		setSubTitle(Integer.toString(display.getId()));
 	}
 
 	@Override
@@ -58,15 +57,22 @@ public class DefaultGraphDisplayComponentProvider extends ComponentProviderAdapt
 	public void closeComponent() {
 		if (display != null) {
 			super.closeComponent();
-			// to prevent looping, null out display before callings its close method.
+			// to prevent looping, null out display before calling its close method.
 			GraphDisplay closingDisplay = display;
 			display = null;
 			closingDisplay.close();
+			removeAllLocalActions();
 		}
 	}
 
 	@Override
 	public ActionContext getActionContext(MouseEvent event) {
 		return display.getActionContext(event);
+	}
+
+	// overridden to make it accessible
+	@Override
+	public void removeAllLocalActions() {
+		super.removeAllLocalActions();
 	}
 }

@@ -16,8 +16,17 @@
 package ghidra.service.graph;
 
 import java.util.*;
+import java.util.Map.Entry;
+
+import org.apache.commons.text.StringEscapeUtils;
+
+import com.google.common.base.Splitter;
 
 public class Attributed {
+	/**
+	 * cache of the html rendering of the vertex attributes
+	 */
+	private String htmlString;
 
 	/**
 	 * the {@link HashMap} to contain attribute mappings
@@ -41,6 +50,7 @@ public class Attributed {
 	 * @return the previous value of the attribute
 	 */
 	public String setAttribute(String key, String value) {
+		htmlString = null;
 		return attributes.put(key, value);
 	}
 
@@ -76,7 +86,7 @@ public class Attributed {
 
 	/**
 	 * Returns the number of attributes defined
-	 * 
+	 *
 	 * @return the number of attributes defined
 	 */
 	public int size() {
@@ -133,6 +143,34 @@ public class Attributed {
 	 */
 	public Set<Map.Entry<String, String>> entrySet() {
 		return attributes.entrySet();
+	}
+
+	/**
+	 * parse (one time) then cache the attributes to html
+	 * @return the html string
+	 */
+	public String getHtmlString() {
+
+		if (htmlString != null) {
+			return htmlString;
+		}
+
+		Set<Entry<String, String>> entries = entrySet();
+		if (entries.isEmpty()) {
+			return ""; // empty so tooltip clients can handle empty data
+		}
+
+		StringBuilder buf = new StringBuilder("<html>");
+		for (Map.Entry<String, String> entry : entries) {
+			buf.append(entry.getKey());
+			buf.append(":");
+			String value = StringEscapeUtils.escapeHtml4(entry.getValue());
+			String split = String.join("<br>", Splitter.on('\n').split(value));
+			buf.append(split);
+			buf.append("<br>");
+		}
+		htmlString = buf.toString();
+		return htmlString;
 	}
 
 }

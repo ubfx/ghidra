@@ -57,18 +57,37 @@ public abstract class AbstractDemanglerAnalyzer extends AbstractAnalyzer {
 	public boolean added(Program program, AddressSetView set, TaskMonitor monitor, MessageLog log)
 			throws CancelledException {
 
+		try {
+			monitor.setIndeterminate(true);
+			return doAdded(program, set, monitor, log);
+		}
+		finally {
+			monitor.setIndeterminate(false);
+		}
+	}
+
+	private boolean doAdded(Program program, AddressSetView set, TaskMonitor monitor,
+			MessageLog log)
+			throws CancelledException {
+
 		DemanglerOptions options = getOptions();
 		if (!validateOptions(options, log)) {
 			log.appendMsg(getName(), "Invalid demangler options--cannot demangle");
 			return false;
 		}
 
-		monitor.initialize(100);
+		int count = 0;
+
+		String defaultMessage = monitor.getMessage();
 
 		SymbolTable symbolTable = program.getSymbolTable();
 		SymbolIterator it = symbolTable.getPrimarySymbolIterator(set, true);
 		while (it.hasNext()) {
 			monitor.checkCanceled();
+
+			if (++count % 100 == 0) {
+				monitor.setMessage(defaultMessage + " - " + count + " symbols");
+			}
 
 			Symbol symbol = it.next();
 			if (skipSymbol(symbol)) {
@@ -77,16 +96,10 @@ public abstract class AbstractDemanglerAnalyzer extends AbstractAnalyzer {
 
 			Address address = symbol.getAddress();
 			String mangled = cleanSymbol(address, symbol.getName());
-			DemangledObject demangled = demangle(mangled, options, log);
+			DemangledObject demangled = demangle(mangled, address, options, log);
 			if (demangled != null) {
 				apply(program, address, demangled, options, log, monitor);
 			}
-
-			Address min = set.getMinAddress();
-			Address max = set.getMaxAddress();
-			int distance = (int) (address.getOffset() - min.getOffset());
-			int percent = (int) ((distance / max.getOffset()) * 100);
-			monitor.setProgress(percent);
 		}
 
 		return true;
@@ -172,11 +185,13 @@ public abstract class AbstractDemanglerAnalyzer extends AbstractAnalyzer {
 	 * handled.
 	 *  
 	 * @param mangled the mangled string
+	 * @param address the symbol address
 	 * @param options the demangler options
 	 * @param log the error log
 	 * @return the demangled object; null if unsuccessful
 	 */
-	protected DemangledObject demangle(String mangled, DemanglerOptions options, MessageLog log) {
+	protected DemangledObject demangle(String mangled, Address address, DemanglerOptions options,
+			MessageLog log) {
 
 		DemangledObject demangled = null;
 		try {
@@ -192,7 +207,8 @@ public abstract class AbstractDemanglerAnalyzer extends AbstractAnalyzer {
 			}
 
 			log.appendMsg(getName(),
-				"Unable to demangle symbol: " + mangled + ".  Message: " + e.getMessage());
+				"Unable to demangle symbol: " + mangled + " at " + address + ".  Message: " +
+					e.getMessage());
 			return null;
 		}
 

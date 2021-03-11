@@ -380,7 +380,7 @@ public class MemoryMapProvider2Test extends AbstractGhidraHeadedIntegrationTest 
 		assertFalse(okButton.isEnabled());
 
 		String msg = findLabelStr(d.getComponent(), "statusLabel");
-		assertEquals("Please enter a valid starting address", msg);
+		assertEquals("Please enter a valid Start Address", msg);
 		assertFalse(okButton.isEnabled());
 		close(d);
 	}
@@ -412,7 +412,7 @@ public class MemoryMapProvider2Test extends AbstractGhidraHeadedIntegrationTest 
 		assertFalse(okButton.isEnabled());
 
 		String msg = findLabelStr(d.getComponent(), "statusLabel");
-		assertEquals("Please enter a name", msg);
+		assertEquals("Please enter a Block Name", msg);
 		assertFalse(okButton.isEnabled());
 
 	}
@@ -445,7 +445,7 @@ public class MemoryMapProvider2Test extends AbstractGhidraHeadedIntegrationTest 
 		assertFalse(okButton.isEnabled());
 
 		String msg = findLabelStr(d.getComponent(), "statusLabel");
-		assertEquals("Please enter a valid length between 0 and 0x400000000", msg);
+		assertEquals("Please enter a valid Length: 1 to 0x100000000", msg);
 		assertFalse(okButton.isEnabled());
 		close(d);
 	}
@@ -485,7 +485,7 @@ public class MemoryMapProvider2Test extends AbstractGhidraHeadedIntegrationTest 
 		assertFalse(okButton.isEnabled());
 
 		String msg = findLabelStr(d.getComponent(), "statusLabel");
-		assertEquals("Please enter a valid length between 0 and 0x400000000", msg);
+		assertEquals("Please enter a valid Length: 1 to 0x100000000", msg);
 		assertFalse(okButton.isEnabled());
 		close(d);
 	}
@@ -502,6 +502,7 @@ public class MemoryMapProvider2Test extends AbstractGhidraHeadedIntegrationTest 
 
 		JTextField nameField =
 			(JTextField) findComponentByName(d.getComponent(), "Block Name");
+		JTextField lengthField = (JTextField) findComponentByName(d.getComponent(), "Length");
 		JTextField commentField =
 			(JTextField) findComponentByName(d.getComponent(), "Comment");
 		JCheckBox executeCB = (JCheckBox) findComponentByName(d.getComponent(), "Execute");
@@ -512,15 +513,16 @@ public class MemoryMapProvider2Test extends AbstractGhidraHeadedIntegrationTest 
 
 		runSwing(() -> {
 			nameField.setText(".rsrc");
+			lengthField.setText("0x100");
 			commentField.setText("this is a block test");
 			initialValue.setText("0xb");
 			executeCB.setSelected(true);
 		});
-		assertFalse(okButton.isEnabled());
+		assertTrue(okButton.isEnabled());
 
 		String msg = findLabelStr(d.getComponent(), "statusLabel");
-		assertEquals("Block name already exists", msg);
-		assertFalse(okButton.isEnabled());
+		assertEquals("Warning! Duplicate Block Name", msg);
+
 		close(d);
 	}
 

@@ -19,7 +19,8 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.util.*;
 
-import db.Record;
+import db.Field;
+import db.DBRecord;
 import ghidra.docking.settings.Settings;
 import ghidra.docking.settings.SettingsDefinition;
 import ghidra.program.database.DBObjectCache;
@@ -46,7 +47,7 @@ class EnumDB extends DataTypeDB implements Enum {
 	private List<BitGroup> bitGroups;
 
 	EnumDB(DataTypeManagerDB dataMgr, DBObjectCache<DataTypeDB> cache, EnumDBAdapter adapter,
-			EnumValueDBAdapter valueAdapter, Record record) {
+			EnumValueDBAdapter valueAdapter, DBRecord record) {
 		super(dataMgr, cache, record);
 		this.adapter = adapter;
 		this.valueAdapter = valueAdapter;
@@ -84,10 +85,10 @@ class EnumDB extends DataTypeDB implements Enum {
 		nameMap = new HashMap<>();
 		valueMap = new HashMap<>();
 
-		long[] ids = valueAdapter.getValueIdsInEnum(key);
+		Field[] ids = valueAdapter.getValueIdsInEnum(key);
 
-		for (long id : ids) {
-			Record rec = valueAdapter.getRecord(id);
+		for (Field id : ids) {
+			DBRecord rec = valueAdapter.getRecord(id.getLongValue());
 			String valueName = rec.getString(EnumValueDBAdapter.ENUMVAL_NAME_COL);
 			long value = rec.getLongValue(EnumValueDBAdapter.ENUMVAL_VALUE_COL);
 			addToCache(valueName, value);
@@ -179,7 +180,9 @@ class EnumDB extends DataTypeDB implements Enum {
 		try {
 			checkIsValid();
 			initializeIfNeeded();
-			return nameMap.keySet().toArray(new String[nameMap.size()]);
+			String[] names = nameMap.keySet().toArray(new String[nameMap.size()]);
+			Arrays.sort(names);
+			return names;
 		}
 		finally {
 			lock.release();
@@ -250,12 +253,12 @@ class EnumDB extends DataTypeDB implements Enum {
 			}
 			bitGroups = null;
 
-			long[] ids = valueAdapter.getValueIdsInEnum(key);
+			Field[] ids = valueAdapter.getValueIdsInEnum(key);
 
-			for (long id : ids) {
-				Record rec = valueAdapter.getRecord(id);
+			for (Field id : ids) {
+				DBRecord rec = valueAdapter.getRecord(id.getLongValue());
 				if (valueName.equals(rec.getString(EnumValueDBAdapter.ENUMVAL_NAME_COL))) {
-					valueAdapter.removeRecord(id);
+					valueAdapter.removeRecord(id.getLongValue());
 					break;
 				}
 			}
@@ -284,9 +287,9 @@ class EnumDB extends DataTypeDB implements Enum {
 			nameMap = new HashMap<>();
 			valueMap = new HashMap<>();
 
-			long[] ids = valueAdapter.getValueIdsInEnum(key);
-			for (long id : ids) {
-				valueAdapter.removeRecord(id);
+			Field[] ids = valueAdapter.getValueIdsInEnum(key);
+			for (Field id : ids) {
+				valueAdapter.removeRecord(id.getLongValue());
 			}
 
 			int oldLength = getLength();
@@ -551,7 +554,7 @@ class EnumDB extends DataTypeDB implements Enum {
 			nameMap = null;
 			valueMap = null;
 			bitGroups = null;
-			Record rec = adapter.getRecord(key);
+			DBRecord rec = adapter.getRecord(key);
 			if (rec != null) {
 				record = rec;
 				return super.refresh();

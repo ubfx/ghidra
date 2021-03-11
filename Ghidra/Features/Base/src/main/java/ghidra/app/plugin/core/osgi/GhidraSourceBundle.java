@@ -47,6 +47,7 @@ import generic.io.NullPrintWriter;
 import generic.jar.ResourceFile;
 import ghidra.app.script.*;
 import ghidra.util.Msg;
+import utilities.util.FileUtilities;
 
 /**
  * {@link GhidraSourceBundle} represents a Java source directory that is compiled on build to an OSGi bundle.
@@ -173,20 +174,18 @@ public class GhidraSourceBundle extends GhidraBundle {
 	 * 
 	 * @param sourceFile a source file from this bundle
 	 * @return the class name
+	 * @throws ClassNotFoundException if {@code sourceFile} isn't contained in this bundle
 	 */
-	public String classNameForScript(ResourceFile sourceFile) {
-		try {
-			String path = sourceFile.getCanonicalPath();
-
-			// get the relative path and chop ".java" from the end
-			path = path.substring(1 + getSourceDirectory().getCanonicalPath().length(),
-				path.length() - 5);
-			return path.replace(File.separatorChar, '.');
+	public String classNameForScript(ResourceFile sourceFile) throws ClassNotFoundException {
+		String relativePath = FileUtilities.relativizePath(getSourceDirectory(), sourceFile);
+		if (relativePath == null) {
+			throw new ClassNotFoundException(
+				String.format("Failed to find script file '%s' in source directory '%s'",
+					sourceFile, getSourceDirectory()));
 		}
-		catch (IOException e) {
-			Msg.error(this, "getting class name for script", e);
-			return null;
-		}
+		// chop ".java" from the end
+		relativePath = relativePath.substring(0, relativePath.length() - 5);
+		return relativePath.replace(File.separatorChar, '.');
 	}
 
 	void clearBuildErrors(ResourceFile sourceFile) {
@@ -713,9 +712,29 @@ public class GhidraSourceBundle extends GhidraBundle {
 			}
 		}
 		catch (Throwable e) {
-			Msg.error(this, "Exception searching ", e);
-			e.printStackTrace();
+			Msg.error(this, "Exception while searching for file system discrepancies ", e);
 		}
+	}
+
+	/* requirements that resolve internally are never "missing", but will only resolve _after_ build/install */
+	private boolean resolveInternally(List<BundleRequirement> requirements)
+			throws GhidraBundleException {
+		if (requirements.isEmpty()) {
+			return true;
+		}
+		List<BundleCapability> capabilities = getAllCapabilities();
+		Iterator<BundleRequirement> requirementIterator = requirements.iterator();
+		boolean anyMissing = false;
+		while (requirementIterator.hasNext()) {
+			BundleRequirement requirement = requirementIterator.next();
+			if (capabilities.stream().anyMatch(requirement::matches)) {
+				requirementIterator.remove();
+			}
+			else {
+				anyMissing = true;
+			}
+		}
+		return !anyMissing;
 	}
 
 	/*
@@ -740,7 +759,7 @@ public class GhidraSourceBundle extends GhidraBundle {
 		List<BundleRequirement> requirements = getAllRequirements();
 		List<BundleWiring> bundleWirings = bundleHost.resolve(requirements);
 
-		if (!requirements.isEmpty()) {
+		if (!resolveInternally(requirements)) {
 			writer.printf("%d import requirement%s remain%s unresolved:\n", requirements.size(),
 				requirements.size() > 1 ? "s" : "", requirements.size() > 1 ? "" : "s");
 			for (BundleRequirement requirement : requirements) {
@@ -1097,8 +1116,7 @@ public class GhidraSourceBundle extends GhidraBundle {
 			}
 
 			try (Stream<Path> paths = Files.list(directory)) {
-				classToClassFilesMap = paths
-						.filter(p -> Files.isRegularFile(p))
+				classToClassFilesMap = paths.filter(p -> Files.isRegularFile(p))
 						.filter(p -> p.getFileName().toString().endsWith(".class"))
 						.collect(groupingBy(this::getClassName));
 			}

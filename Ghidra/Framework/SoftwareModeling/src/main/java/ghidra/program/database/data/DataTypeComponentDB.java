@@ -20,7 +20,7 @@ package ghidra.program.database.data;
 
 import java.io.IOException;
 
-import db.Record;
+import db.DBRecord;
 import ghidra.docking.settings.Settings;
 import ghidra.program.model.data.*;
 import ghidra.util.SystemUtilities;
@@ -35,7 +35,7 @@ class DataTypeComponentDB implements InternalDataTypeComponent {
 
 	private final DataTypeManagerDB dataMgr;
 	private final ComponentDBAdapter adapter;
-	private final Record record; // null record -> undefined component
+	private final DBRecord record; // null record -> undefined component
 	private final Composite parent;
 
 	private DataType cachedDataType; // required for bit-fields during packing process
@@ -78,7 +78,7 @@ class DataTypeComponentDB implements InternalDataTypeComponent {
 	 * @param record
 	 */
 	DataTypeComponentDB(DataTypeManagerDB dataMgr, ComponentDBAdapter adapter, Composite parent,
-			Record record) {
+			DBRecord record) {
 		this.dataMgr = dataMgr;
 		this.adapter = adapter;
 		this.record = record;
@@ -345,14 +345,17 @@ class DataTypeComponentDB implements InternalDataTypeComponent {
 		DataType myParent = getParent();
 		boolean aligned =
 			(myParent instanceof Composite) ? ((Composite) myParent).isInternallyAligned() : false;
-		// Components don't need to have matching offset when they are aligned, only matching ordinal.
-		// NOTE: use getOffset() and getOrdinal() methods since returned values will differ from
+		// Components don't need to have matching offset when they are aligned
+		// NOTE: use getOffset() method since returned values will differ from
 		// stored values for flexible array component
 		if ((!aligned && (getOffset() != dtc.getOffset())) ||
-			// Components don't need to have matching length when they are aligned. Is this correct?
-			(!aligned && (getLength() != dtc.getLength())) || getOrdinal() != dtc.getOrdinal() ||
 			!SystemUtilities.isEqual(getFieldName(), dtc.getFieldName()) ||
 			!SystemUtilities.isEqual(getComment(), dtc.getComment())) {
+			return false;
+		}
+
+		// Component lengths need only be checked for dynamic types
+		if (getLength() != dtc.getLength() && (myDt instanceof Dynamic)) {
 			return false;
 		}
 
@@ -435,7 +438,7 @@ class DataTypeComponentDB implements InternalDataTypeComponent {
 		}
 	}
 
-	Record getRecord() {
+	DBRecord getRecord() {
 		return record;
 	}
 

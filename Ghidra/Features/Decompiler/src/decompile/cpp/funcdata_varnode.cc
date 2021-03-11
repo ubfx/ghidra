@@ -291,7 +291,7 @@ void Funcdata::destroyVarnode(Varnode *vn)
 
 /// Check if the given storage range is a potential laned register.
 /// If so, record the storage with the matching laned register record.
-/// \param s is the size of the storage range in bytes
+/// \param size is the size of the storage range in bytes
 /// \param addr is the starting address of the storage range
 void Funcdata::checkForLanedRegister(int4 size,const Address &addr)
 
@@ -731,38 +731,35 @@ void Funcdata::clearDeadVarnodes(void)
 void Funcdata::calcNZMask(void)
 
 {
-  vector<PcodeOp *> opstack;
-  vector<int4> slotstack;
+  vector<PcodeOpNode> opstack;
   list<PcodeOp *>::const_iterator oiter;
 
   for(oiter=beginOpAlive();oiter!=endOpAlive();++oiter) {
     PcodeOp *op = *oiter;
     if (op->isMark()) continue;
-    opstack.push_back(op);
-    slotstack.push_back(0);
+    opstack.push_back(PcodeOpNode(op,0));
     op->setMark();
 
     do {
       // Get next edge
-      op = opstack.back();
-      int4 slot = slotstack.back();
-      if (slot >= op->numInput()) { // If no edge left
-	Varnode *outvn = op->getOut();
+      PcodeOpNode &node( opstack.back() );
+      if (node.slot >= node.op->numInput()) { // If no edge left
+	Varnode *outvn = node.op->getOut();
 	if (outvn != (Varnode *)0) {
-	  outvn->nzm = op->getNZMaskLocal(true);
+	  outvn->nzm = node.op->getNZMaskLocal(true);
 	}
 	opstack.pop_back();	// Pop a level
-	slotstack.pop_back();
 	continue;
       }
-      slotstack.back() = slot + 1; // Advance to next input
+      int4 oldslot = node.slot;
+      node.slot += 1; // Advance to next input
       // Determine if we want to traverse this edge
-      if (op->code() == CPUI_MULTIEQUAL) {
-	if (op->getParent()->isLoopIn(slot)) // Clip looping edges
+      if (node.op->code() == CPUI_MULTIEQUAL) {
+	if (node.op->getParent()->isLoopIn(oldslot)) // Clip looping edges
 	  continue;
       }
       // Traverse edge indicated by slot
-      Varnode *vn = op->getIn(slot);
+      Varnode *vn = node.op->getIn(oldslot);
       if (!vn->isWritten()) {
 	if (vn->isConstant())
 	  vn->nzm = vn->getOffset();
@@ -773,32 +770,32 @@ void Funcdata::calcNZMask(void)
 	}
       }
       else if (!vn->getDef()->isMark()) { // If haven't traversed before
-	opstack.push_back(vn->getDef());
-	slotstack.push_back(0);
+	opstack.push_back(PcodeOpNode(vn->getDef(),0));
 	vn->getDef()->setMark();
       }
     } while(!opstack.empty());
   }
 
+  vector<PcodeOp *> worklist;
   // Clear marks and push ops with looping edges onto worklist
   for(oiter=beginOpAlive();oiter!=endOpAlive();++oiter) {
     PcodeOp *op = *oiter;
     op->clearMark();
     if (op->code() == CPUI_MULTIEQUAL)
-      opstack.push_back(op);
+      worklist.push_back(op);
   }
 
   // Continue to propagate changes along all edges
-  while(!opstack.empty()) {
-    PcodeOp *op = opstack.back();
-    opstack.pop_back();
+  while(!worklist.empty()) {
+    PcodeOp *op = worklist.back();
+    worklist.pop_back();
     Varnode *vn = op->getOut();
     if (vn == (Varnode *)0) continue;
     uintb nzmask = op->getNZMaskLocal(false);
     if (nzmask != vn->nzm) {
       vn->nzm = nzmask;
       for(oiter=vn->beginDescend();oiter!=vn->endDescend();++oiter)
-	opstack.push_back(*oiter);
+	worklist.push_back(*oiter);
     }
   }
 }
@@ -1376,6 +1373,35 @@ Address Funcdata::findDisjointCover(Varnode *vn,int4 &sz)
   return addr;
 }
 
+/// \brief Make sure every Varnode in the given list has a Symbol it will link to
+///
+/// This is used when Varnodes overlap a locked Symbol but extend beyond it.
+/// An existing Symbol is passed in with a list of possibly overextending Varnodes.
+/// The list is in Address order.  We check that each Varnode has a Symbol that
+/// overlaps its first byte (to guarantee a link). If one doesn't exist it is created.
+/// \param entry is the existing Symbol entry
+/// \param list is the list of Varnodes
+void Funcdata::coverVarnodes(SymbolEntry *entry,vector<Varnode *> &list)
+
+{
+  Scope *scope = entry->getSymbol()->getScope();
+  for(int4 i=0;i<list.size();++i) {
+    Varnode *vn = list[i];
+    // We only need to check once for all Varnodes at the same Address
+    // Of these, pick the biggest Varnode
+    if (i+1<list.size() && list[i+1]->getAddr() == vn->getAddr())
+      continue;
+    Address usepoint = vn->getUsePoint(*this);
+    SymbolEntry *overlapEntry = scope->findContainer(vn->getAddr(), vn->getSize(), usepoint);
+    if (overlapEntry == (SymbolEntry *)0) {
+      int4 diff = (int4)(vn->getOffset() - entry->getAddr().getOffset());
+      ostringstream s;
+      s << entry->getSymbol()->getName() << '_' << diff;
+      scope->addSymbol(s.str(),vn->getHigh()->getType(),vn->getAddr(),usepoint);
+    }
+  }
+}
+
 /// Search for \e addrtied Varnodes whose storage falls in the global Scope, then
 /// build a new global Symbol if one didn't exist before.
 void Funcdata::mapGlobals(void)
@@ -1386,6 +1412,7 @@ void Funcdata::mapGlobals(void)
   Varnode *vn,*maxvn;
   Datatype *ct;
   uint4 flags;
+  vector<Varnode *> uncoveredVarnodes;
   bool inconsistentuse = false;
 
   iter = vbank.beginLoc(); // Go through all varnodes for this space
@@ -1398,10 +1425,16 @@ void Funcdata::mapGlobals(void)
     maxvn = vn;
     Address addr = vn->getAddr();
     Address endaddr = addr + vn->getSize();
+    uncoveredVarnodes.clear();
     while(iter != enditer) {
       vn = *iter;
       if (!vn->isPersist()) break;
       if (vn->getAddr() < endaddr) {
+	// Varnodes at the same base address will get linked to the Symbol at that address
+	// even if the size doesn't match, but we check for internal Varnodes that
+	// do not have an attached Symbol as these won't get linked to anything
+	if (vn->getAddr() != addr && vn->getSymbolEntry() == (SymbolEntry *)0)
+	  uncoveredVarnodes.push_back(vn);
 	endaddr = vn->getAddr() + vn->getSize();
 	if (vn->getSize() > maxvn->getSize())
 	  maxvn = vn;
@@ -1429,8 +1462,11 @@ void Funcdata::mapGlobals(void)
 						      Varnode::addrtied|Varnode::persist);
       discover->addSymbol(symbolname,ct,addr,usepoint);
     }
-    else if ((addr.getOffset()+ct->getSize())-1 > (entry->getAddr().getOffset()+entry->getSize()) -1)
+    else if ((addr.getOffset()+ct->getSize())-1 > (entry->getAddr().getOffset()+entry->getSize()) -1) {
       inconsistentuse = true;
+      if (!uncoveredVarnodes.empty())	// Provide Symbols for any uncovered internal Varnodes
+	coverVarnodes(entry, uncoveredVarnodes);
+    }
   }
   if (inconsistentuse)
     warningHeader("Globals starting with '_' overlap smaller symbols at the same address");

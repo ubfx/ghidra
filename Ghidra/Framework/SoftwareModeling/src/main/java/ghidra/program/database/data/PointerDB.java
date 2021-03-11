@@ -17,7 +17,7 @@ package ghidra.program.database.data;
 
 import java.io.IOException;
 
-import db.Record;
+import db.DBRecord;
 import ghidra.docking.settings.Settings;
 import ghidra.docking.settings.SettingsDefinition;
 import ghidra.program.database.DBObjectCache;
@@ -55,7 +55,7 @@ class PointerDB extends DataTypeDB implements Pointer {
 	 * @param record
 	 */
 	public PointerDB(DataTypeManagerDB dataMgr, DBObjectCache<DataTypeDB> cache,
-			PointerDBAdapter adapter, Record record) {
+			PointerDBAdapter adapter, DBRecord record) {
 		super(dataMgr, cache, record);
 		this.adapter = adapter;
 	}
@@ -108,7 +108,7 @@ class PointerDB extends DataTypeDB implements Pointer {
 	@Override
 	protected boolean refresh() {
 		try {
-			Record rec = adapter.getRecord(key);
+			DBRecord rec = adapter.getRecord(key);
 			if (rec != null) {
 				record = rec;
 				return super.refresh();
@@ -136,23 +136,31 @@ class PointerDB extends DataTypeDB implements Pointer {
 
 	@Override
 	public String getDisplayName() {
-		// NOTE: Pointer display name only specifies length if null base type
-		validate(lock);
 		String localDisplayName = displayName;
-		if (localDisplayName == null) {
-			DataType dt = getDataType();
-			if (dt == null) {
-				localDisplayName = PointerDataType.POINTER_NAME;
-				if (!isDynamicallySized()) {
-					localDisplayName += Integer.toString(getLength() * 8);
+		if (localDisplayName != null && !isInvalid()) {
+			return localDisplayName;
+		}
+		lock.acquire();
+		try {
+			checkIsValid();
+			if ( displayName == null ) {
+				// NOTE: Pointer display name only specifies length if null base type
+				DataType dt = getDataType();
+				if (dt == null) {
+					displayName = PointerDataType.POINTER_NAME;
+					if (!isDynamicallySized()) {
+						displayName += Integer.toString(getLength() * 8);
+					}
+				}
+				else {
+					displayName = dt.getDisplayName() + " *";
 				}
 			}
-			else {
-				localDisplayName = dt.getDisplayName() + " *";
-			}
-			displayName = localDisplayName;
+			return displayName;
 		}
-		return localDisplayName;
+		finally {
+			lock.release();
+		}
 	}
 
 	@Override

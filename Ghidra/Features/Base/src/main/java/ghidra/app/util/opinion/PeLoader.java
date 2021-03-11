@@ -27,6 +27,7 @@ import ghidra.app.util.bin.BinaryReader;
 import ghidra.app.util.bin.ByteProvider;
 import ghidra.app.util.bin.format.mz.DOSHeader;
 import ghidra.app.util.bin.format.pe.*;
+import ghidra.app.util.bin.format.pe.ImageCor20Header.ImageCor20Flags;
 import ghidra.app.util.bin.format.pe.PortableExecutable.SectionLayout;
 import ghidra.app.util.bin.format.pe.debug.DebugCOFFSymbol;
 import ghidra.app.util.bin.format.pe.debug.DebugDirectoryParser;
@@ -34,6 +35,7 @@ import ghidra.app.util.importer.MessageLog;
 import ghidra.app.util.importer.MessageLogContinuesFactory;
 import ghidra.framework.model.DomainObject;
 import ghidra.framework.options.Options;
+import ghidra.program.database.function.OverlappingFunctionException;
 import ghidra.program.database.mem.FileBytes;
 import ghidra.program.model.address.*;
 import ghidra.program.model.data.*;
@@ -140,6 +142,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 
 			processExports(optionalHeader, program, monitor, log);
 			processImports(optionalHeader, program, monitor, log);
+			processDelayImports(optionalHeader, program, monitor, log);
 			processRelocations(optionalHeader, program, monitor, log);
 			processDebug(optionalHeader, fileHeader, sectionToAddress, program, monitor);
 			processProperties(optionalHeader, program, monitor);
@@ -445,6 +448,84 @@ public class PeLoader extends AbstractPeDebugLoader {
 		}
 	}
 
+	private void processDelayImports(OptionalHeader optionalHeader, Program program,
+			TaskMonitor monitor, MessageLog log) {
+
+		if (monitor.isCancelled()) {
+			return;
+		}
+		monitor.setMessage("[" + program.getName() + "]: processing delay imports...");
+
+		DataDirectory[] dataDirectories = optionalHeader.getDataDirectories();
+		if (dataDirectories.length <= OptionalHeader.IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT) {
+			return;
+		}
+
+		DelayImportDataDirectory didd =
+			(DelayImportDataDirectory) dataDirectories[OptionalHeader.IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT];
+		if (didd == null) {
+			return;
+		}
+
+		log.appendMsg("Delay imports detected...");
+
+		AddressSpace space = program.getAddressFactory().getDefaultAddressSpace();
+		Listing listing = program.getListing();
+		ReferenceManager refManager = program.getReferenceManager();
+		FunctionManager funcManager = program.getFunctionManager();
+
+		DelayImportDescriptor[] descriptors = didd.getDelayImportDescriptors();
+		for (DelayImportDescriptor descriptor : descriptors) {
+			if (monitor.isCancelled()) {
+				return;
+			}
+
+			// Get address of the first entry in the import address table
+			Address iatBaseAddr = space.getAddress(descriptor.isUsingRVA()
+					? descriptor.getAddressOfIAT() + optionalHeader.getImageBase()
+					: descriptor.getAddressOfIAT());
+
+			for (ImportInfo importInfo : descriptor.getImportList()) {
+
+				// Get the offset from the import list. -1 is the default (no offset)
+				long offset = importInfo.getAddress();
+				if (offset < 0) {
+					break;
+				}
+
+				// Get address of current position in the import address table 
+				Address iatAddr = iatBaseAddr.add(offset);
+				Data iatData = listing.getDataAt(iatAddr);
+				if (iatData == null || !(iatData.getValue() instanceof Address)) {
+					continue;
+				}
+
+				// Create external reference
+				try {
+					refManager.addExternalReference(iatAddr, importInfo.getDLL(),
+						importInfo.getName(), null, SourceType.IMPORTED, 0, RefType.DATA);
+				}
+				catch (DuplicateNameException | InvalidInputException e) {
+					log.appendMsg(
+						"Failed to create Delay Load external function at: " + iatAddr);
+				}
+
+				// Create delay load proxy function
+				Address proxyFuncAddr = (Address) iatData.getValue();
+				if (funcManager.getFunctionAt(proxyFuncAddr) == null) {
+					try {
+						funcManager.createFunction("DelayLoad_" + importInfo.getName(),
+							proxyFuncAddr, new AddressSet(proxyFuncAddr), SourceType.IMPORTED);
+					}
+					catch (InvalidInputException | OverlappingFunctionException e) {
+						log.appendMsg(
+							"Failed to create Delay Load proxy function at: " + proxyFuncAddr);
+					}
+				}
+			}
+		}
+	}
+
 	/**
 	 * Mark this location as code in the CodeMap.
 	 * The analyzers will pick this up and disassemble the code.
@@ -483,8 +564,8 @@ public class PeLoader extends AbstractPeDebugLoader {
 				}
 				RegisterValue thumbMode = new RegisterValue(tmodeReg, BigInteger.ONE);
 				AddressSpace space = program.getAddressFactory().getDefaultAddressSpace();
-				program.getProgramContext().setRegisterValue(space.getMinAddress(),
-					space.getMaxAddress(), thumbMode);
+				program.getProgramContext()
+						.setRegisterValue(space.getMinAddress(), space.getMaxAddress(), thumbMode);
 			}
 		}
 		catch (ContextChangeException e) {
@@ -514,7 +595,6 @@ public class PeLoader extends AbstractPeDebugLoader {
 		AddressFactory af = program.getAddressFactory();
 		AddressSpace space = af.getDefaultAddressSpace();
 		SymbolTable symTable = program.getSymbolTable();
-		Memory memory = program.getMemory();
 		Listing listing = program.getListing();
 		ReferenceManager refManager = program.getReferenceManager();
 
@@ -592,7 +672,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 
 	private Map<SectionHeader, Address> processMemoryBlocks(PortableExecutable pe, Program prog,
 			FileBytes fileBytes, TaskMonitor monitor, MessageLog log)
-			throws AddressOverflowException, IOException {
+			throws AddressOverflowException {
 
 		AddressFactory af = prog.getAddressFactory();
 		AddressSpace space = af.getDefaultAddressSpace();
@@ -642,8 +722,9 @@ public class PeLoader extends AbstractPeDebugLoader {
 					SectionFlags.IMAGE_SCN_MEM_EXECUTE.getMask()) != 0x0);
 
 				int rawDataSize = sections[i].getSizeOfRawData();
+				int rawDataPtr = sections[i].getPointerToRawData();
 				virtualSize = sections[i].getVirtualSize();
-				if (rawDataSize != 0) {
+				if (rawDataSize != 0 && rawDataPtr != 0) {
 					int dataSize =
 						((rawDataSize > virtualSize && virtualSize > 0) || rawDataSize < 0)
 								? virtualSize
@@ -654,13 +735,12 @@ public class PeLoader extends AbstractPeDebugLoader {
 							Msg.warn(this, "OptionalHeader.SizeOfImage < size of " +
 								sections[i].getName() + " section");
 						}
-						long offset = sections[i].getPointerToRawData();
 						String sectionName = sections[i].getReadableName();
 						if (sectionName.isBlank()) {
 							sectionName = "SECTION." + i;
 						}
 						MemoryBlockUtils.createInitializedBlock(prog, false, sectionName, address,
-							fileBytes, offset, dataSize, "", "", r, w, x, log);
+							fileBytes, rawDataPtr, dataSize, "", "", r, w, x, log);
 						sectionToAddress.put(sections[i], address);
 					}
 					if (rawDataSize == virtualSize) {
@@ -755,14 +835,73 @@ public class PeLoader extends AbstractPeDebugLoader {
 		long imageBase = optionalHeader.getImageBase();
 		Address entryAddr = baseAddr.addWrap(imageBase);
 		entry += optionalHeader.getImageBase();
+
+		// get IL entry if it has one
+		Address ILEntryPointVA = getILEntryPoint(optionalHeader);
+		if (ILEntryPointVA != null) {
+			// The OptionalHeader can specify a single-instruction native code
+			// entry point even in IL-only binaries for backwards compatibility
+			if (entry > 0) {
+				try {
+					symTable.createLabel(entryAddr, "__x86_CIL_", SourceType.IMPORTED);
+					markAsCode(prog, entryAddr);
+					symTable.addExternalEntryPoint(entryAddr);
+				}
+				catch (InvalidInputException e) {
+					Msg.warn(this,
+						"Backwards compatible native entry point in the CIL binary couldn't be processed");
+				}
+			}
+
+			// Replace native entry point address with IL entry point
+			entryAddr = ILEntryPointVA;
+		}
+
 		try {
+			// mark up entry (either Native or IL)
 			symTable.createLabel(entryAddr, "entry", SourceType.IMPORTED);
 			markAsCode(prog, entryAddr);
 		}
 		catch (InvalidInputException e) {
 			// ignore
 		}
+
 		symTable.addExternalEntryPoint(entryAddr);
+	}
+
+	// @return IL entry point, or null if the binary has a native Entry point
+	private Address getILEntryPoint(OptionalHeader optionalHeader) {
+		// Check to see if this binary has a COMDescriptorDataDirectory in it. If so,
+		// it might be a .NET binary, and if it is and only has a managed code entry point
+		// the value at entry is actually a table index and and row index that we parse in
+		// the ImageCor20Header class. Use that to create the entry label instead later.
+
+		DataDirectory[] dataDirectories = optionalHeader.getDataDirectories();
+		for (DataDirectory element : dataDirectories) {
+			if (element == null) {
+				continue;
+			}
+			if (!(element instanceof COMDescriptorDataDirectory)) {
+				continue;
+			}
+
+			COMDescriptorDataDirectory comDescriptorDataDirectory =
+				(COMDescriptorDataDirectory) element;
+			ImageCor20Header imageCor20Header = comDescriptorDataDirectory.getHeader();
+			if (imageCor20Header == null) {
+				continue;
+			}
+
+			if ((imageCor20Header.getFlags() &
+				ImageCor20Flags.COMIMAGE_FLAGS_NATIVE_ENTRYPOINT) != ImageCor20Flags.COMIMAGE_FLAGS_NATIVE_ENTRYPOINT) {
+				continue;
+			}
+			// Check the flag to see if there's a native code entry point, and if
+			// not this binary has an IL entry that we should label
+			return imageCor20Header.getEntryPointVA();
+		}
+
+		return null;
 	}
 
 	private void processDebug(OptionalHeader optionalHeader, FileHeader fileHeader,
